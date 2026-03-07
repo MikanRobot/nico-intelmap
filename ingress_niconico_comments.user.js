@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.10
+// @version      1.1.11
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -577,12 +577,12 @@ ${chatNote}
 以下の4種類のキャラクターがランダムに混在するコメントを ${commentCount}個 生成してください:
 
 ━━━━━━━━━━━━━━━━━━━━━
-1. 【一般視聴者】（全体の85%以上・white）
+1. 【一般視聴者】（全体の70%以上・white）
    ログに対する自然な反応・感想を短く。
    ポータル名や地名が出たら「〇〇また落とされた」「あそこか」など名前を使って反応する。
    また5%程度で根拠のない陰謀論や深読みコメントを混ぜる。
 
-2. 【Ingressガチ勢】（全体の5%以下・white）
+2. 【Ingressガチ勢】（全体の20%以下・white）
    感情を挟まず冷静にゲーム状況を短く分析する。固有ポータル名・地名を使った分析が望ましい。
 
 3. 【レジスタンス陣営バイアス】（全体の3%以下・blue）
