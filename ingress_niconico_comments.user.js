@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.1
+// @version      1.1.4
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -20,7 +20,7 @@
     // =============================================
     const CONFIG = {
         // コメントのスクロール速度 (px/秒)
-        scrollSpeed: 180,
+        scrollSpeed: 198,
         // コメントの基本フォントサイズ (px)
         fontSize: 24,
         // コメントの最大同時表示行数
@@ -390,8 +390,7 @@
                 }
                 let size = CONFIG.fontSize;
                 if (comment.color === 'white') {
-                    if (Math.random() < 0.05) color = '#ff4444';      // 5%で赤
-                    if (Math.random() < 0.1) size = CONFIG.fontSize * 1.5; // 10%で大
+                    if (Math.random() < 0.1) size = CONFIG.fontSize * 1.5; // 10%で文字を大きくするのみ
                 }
                 showComment(comment.text, color, size);
             }, delay);
@@ -532,12 +531,13 @@
         });
     }
 
-    function triggerAiComment() {
-        if (eventQueue.length === 0) return;
+    function triggerAiComment(isForce = false) {
+        if (eventQueue.length === 0 && !isForce) return;
 
         const openaiKey = GM_getValue('NICO_OPENAI_API_KEY', '').trim();
         const claudeKey = GM_getValue('NICO_CLAUDE_API_KEY', '').trim();
-        if (!openaiKey && !claudeKey) return;
+        const geminiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
+        if (!openaiKey && !claudeKey && !geminiKey) return;
 
         const eventsToProcess = [...eventQueue];
         eventQueue = [];
@@ -579,7 +579,7 @@ ${chatNote}
    ★ENLが緑リンクを引いた / RESの青ポータルや青リンクが破壊されたログがある場合のみ出す
    自陣営(ENL/緑)を称え相手陣営(RES/青)を皮肉る。直接攻撃的な言葉は使わない。
 
-5. 【MACHINA】（全体の0.5%以下・red）
+5. 【MACHINA】（全体の1%以下・red）
    不気味な内容の短い「英語のみ」のコメントを生成する。
    文字化けを演出するため、Zalgo text等の特殊文字は絶対に避け、代わりに大文字と小文字を不規則に混ぜたり、普通の記号(. , - _ * # など)を単語の間に挟んで読みにくくする。
 ━━━━━━━━━━━━━━━━━━━━━
@@ -596,7 +596,6 @@ ${logLines}`;
         const callers = [];
         if (openaiKey) callers.push((retry) => callOpenAI(prompt, commentCount, retry));
         if (claudeKey) callers.push((retry) => callClaude(prompt, commentCount, retry));
-        const geminiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
         if (geminiKey) callers.push((retry) => callGemini(prompt, commentCount, retry));
 
         if (callers.length === 0) return;
@@ -971,7 +970,7 @@ ${logLines}`;
         panel.id = 'niconico-panel';
         Object.assign(panel.style, {
             position: 'fixed',
-            top: '60px',
+            bottom: '30px',
             right: '10px',
             zIndex: '10001',
             background: 'rgba(0,0,0,0.85)',
@@ -1019,8 +1018,7 @@ ${logLines}`;
                         <label><input type="checkbox" id="nico-debug-enabled"> 🛠️ デバッグ表示</label>
                     </div>
                     <div id="nico-debug-log" style="display:none;background:#111;color:#ccc;font-size:11px;height:70px;overflow-y:auto;padding:4px;margin-bottom:8px;border:1px solid #444;border-radius:3px;word-break:break-all;"></div>
-                    <div style="text-align:right;">
-                        <button id="nico-force-run" style="background:#0066cc;border:none;color:#fff;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;">今すぐ流す</button>
+                    <div style="flex: 1;"></div>
                     </div>
                 </div>
 
@@ -1250,27 +1248,6 @@ ${logLines}`;
         // 起動時に保存済みキーを自動検証
         const savedGeminiKey = GM_getValue('NICO_GEMINI_API_KEY', '');
         if (savedGeminiKey) validateGeminiKey(savedGeminiKey);
-
-        // 手動更新（今すぐ流す）ボタン
-        document.getElementById('nico-force-run').addEventListener('click', () => {
-            if (window.addHook && window.portals !== undefined) {
-                // IITC環境
-                watchIITCComms(true);
-            } else {
-                // 純正環境
-                const commsArea = document.getElementById('commsArea') ||
-                    document.querySelector('[data-cy="comms-area"]') ||
-                    document.querySelector('.comms');
-                if (!commsArea) return;
-                const lines = Array.from(commsArea.querySelectorAll('tr, div.chat-line'));
-                for (const node of lines.slice(-5)) {
-                    processNativeCommsNode(node);
-                }
-            }
-
-            // 強制的にAI呼び出しをキックする（キューが空でも最後のバッファから生成）
-            triggerAiComment();
-        });
 
         // ▼トグル（タイトル行の折りたたみボタン）
         const nicoBody = document.getElementById('nico-body');
