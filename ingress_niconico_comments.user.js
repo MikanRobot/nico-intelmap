@@ -51,9 +51,10 @@
     const FACTION_COLORS = {
         RESISTANCE: '#00c8ff',   // 青 (レジスタンス)
         ENLIGHTENED: '#01ff01',  // 緑 (エンライテンド)
-        NEUTRAL: '#ffcc00',  // 黄 (ニュートラル)
-        SYSTEM: '#ffffff',  // 白 (システム通知)
-        ALERT: '#ff4444',  // 赤 (警告)
+        NEUTRAL: '#ffcc00',      // 黄 (ニュートラル)
+        MACHINA: '#ff3333',      // 赤 (マキナ/異常)
+        SYSTEM: '#ffffff',       // 白 (システム通知)
+        ALERT: '#ff4444',        // 赤 (警告)
     };
 
     // =============================================
@@ -203,7 +204,8 @@
         // DOM要素生成
         const el = document.createElement('span');
         el.textContent = text;
-        Object.assign(el.style, {
+
+        let customStyle = {
             position: 'absolute',
             top: `${topPos}px`,
             left: `${screenWidth}px`,   // 画面右端からスタート
@@ -215,7 +217,36 @@
             textShadow: '1px 1px 3px #000, -1px -1px 3px #000',
             willChange: 'transform',
             transition: 'none',
-        });
+        };
+
+        // 赤色(Machina)の場合は不気味なグリッチエフェクトを追加
+        let machinaAnimation = '';
+        if (color === FACTION_COLORS.MACHINA || color === 'red' || color === '#ff3333') {
+            customStyle.fontFamily = '"Courier New", Courier, monospace';
+            customStyle.textShadow = '2px 0 red, -2px 0 cyan';
+            machinaAnimation = 'machinaGlitch 0.3s infinite alternate';
+            customStyle.letterSpacing = '2px';
+            customStyle.opacity = '0.9';
+
+            // グリッチ用アニメーションキーフレームがなければ追加
+            if (!document.getElementById('nico-machina-glitch')) {
+                const style = document.createElement('style');
+                style.id = 'nico-machina-glitch';
+                style.textContent = `
+                    @keyframes machinaGlitch {
+                        0% { transform: translate(0, 0) skew(0deg); }
+                        20% { transform: translate(-2px, 1px) skew(1deg); }
+                        40% { transform: translate(1px, -1px) skew(-1deg); }
+                        60% { transform: translate(-1px, 2px) skew(0deg); opacity: 0.8; }
+                        80% { transform: translate(2px, -2px) skew(2deg); opacity: 1; }
+                        100% { transform: translate(0, 0) skew(0deg); }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+        }
+
+        Object.assign(el.style, customStyle);
         commentContainer.appendChild(el);
 
         // テキスト幅を取得してアニメーション時間を計算
@@ -226,7 +257,7 @@
             (totalDist / CONFIG.scrollSpeed) * 1000
         );
 
-        // CSSアニメーションで流す
+        // CSSアニメーションで流す (Machinaエフェクトがある場合はカンマ区切りで複数アニメーション適用)
         const keyframesName = `nicoScroll_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         const styleEl = document.createElement('style');
         styleEl.textContent = `
@@ -237,7 +268,12 @@
         `;
         document.head.appendChild(styleEl);
 
-        el.style.animation = `${keyframesName} ${duration}ms linear forwards`;
+        const scrollAnim = `${keyframesName} ${duration}ms linear forwards`;
+
+        // Machinaエフェクトがある場合はカンマ区切りで両方のアニメーションを適用
+        el.style.animation = machinaAnimation
+            ? `${machinaAnimation}, ${scrollAnim}`
+            : scrollAnim;
 
         // レーンの次回利用可能時刻を更新
         // テキストの先頭が画面左端を超えたあたりを基準にする
@@ -349,6 +385,7 @@
                 switch (comment.color) {
                     case 'blue': color = '#44aaff'; break; // レジスタンス青
                     case 'green': color = '#44ff88'; break; // エンライテンド緑
+                    case 'red': color = FACTION_COLORS.MACHINA; break; // Machina赤
                     default: color = '#ffffff'; break; // 基本白
                 }
                 let size = CONFIG.fontSize;
@@ -541,9 +578,13 @@ ${chatNote}
 4. 【エンライテンド陣営バイアス】（全体の3%以下・green）
    ★ENLが緑リンクを引いた / RESの青ポータルや青リンクが破壊されたログがある場合のみ出す
    自陣営(ENL/緑)を称え相手陣営(RES/青)を皮肉る。直接攻撃的な言葉は使わない。
+
+5. 【MACHINA】（全体の0.5%以下・red）
+   不気味な内容の短い「英語のみ」のコメントを生成する。
+   文字化けを演出するため、Zalgo text等の特殊文字は絶対に避け、代わりに大文字と小文字を不規則に混ぜたり、普通の記号(. , - _ * # など)を単語の間に挟んで読みにくくする。
 ━━━━━━━━━━━━━━━━━━━━━
 
-出力はJSON形式のみ。各コメントは { "text": "...", "color": "white"|"blue"|"green" } の形式で。
+出力はJSON形式のみ。各コメントは { "text": "...", "color": "white"|"blue"|"green"|"red" } の形式で。
 {"comments": [...]}
 
 COMM ALLログ (古→新):
@@ -1226,6 +1267,9 @@ ${logLines}`;
                     processNativeCommsNode(node);
                 }
             }
+
+            // 強制的にAI呼び出しをキックする（キューが空でも最後のバッファから生成）
+            triggerAiComment();
         });
 
         // ▼トグル（タイトル行の折りたたみボタン）
