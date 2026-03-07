@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.2
+// @version      1.1.8
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -252,10 +252,10 @@
         // テキスト幅を取得してアニメーション時間を計算
         const textWidth = el.scrollWidth;
         const totalDist = screenWidth + textWidth;
-        const duration = Math.max(
-            CONFIG.minDuration,
-            (totalDist / CONFIG.scrollSpeed) * 1000
-        );
+
+        // ★修正点：文字の長さに依らず、一律で同じ時間（ミリ秒）かけて画面を通過するように固定する
+        // デフォルトでは 10000ms (10秒) とする。
+        const duration = 10000;
 
         // CSSアニメーションで流す (Machinaエフェクトがある場合はカンマ区切りで複数アニメーション適用)
         const keyframesName = `nicoScroll_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -276,8 +276,10 @@
             : scrollAnim;
 
         // レーンの次回利用可能時刻を更新
-        // テキストの先頭が画面左端を超えたあたりを基準にする
-        const laneBlockDuration = ((screenWidth + size * text.length * 0.6) / CONFIG.scrollSpeed) * 1000;
+        // コメント全体が画面右端から完全に出るまでの時間(画面幅 + テキスト幅)をdurationで割った割合から求める
+        // 例: duration 10秒で、テキスト幅が画面幅の半分なら、およそ5秒+3秒=8秒後には右端が空く
+        // 余裕を見て、テキストが完全に画面内に収まるまでの時間 (textWidth / totalDist * duration) 分を待つ
+        const laneBlockDuration = (textWidth / totalDist) * duration + 200; // +200msのバッファ
         lanes[laneIndex] = Date.now() + laneBlockDuration;
 
         // アニメーション終了後にDOMを削除
@@ -339,6 +341,8 @@
         const now = Date.now();
         const timeSinceLastCall = now - lastAiCall;
         const timeToWait = Math.max(0, AI_CONFIG.cooldown - timeSinceLastCall);
+
+        addDebugLog(`[待機] APIリクエストをスケジュール（${Math.round(timeToWait / 1000)}秒後）...`, '#666666');
 
         aiTimeout = setTimeout(() => {
             triggerAiComment();
@@ -534,10 +538,15 @@
     function triggerAiComment(isForce = false) {
         if (eventQueue.length === 0 && !isForce) return;
 
+        addDebugLog(`--- AIコメント生成タスク開始 (手動: ${isForce}) ---`, '#cccccc');
+
         const openaiKey = GM_getValue('NICO_OPENAI_API_KEY', '').trim();
         const claudeKey = GM_getValue('NICO_CLAUDE_API_KEY', '').trim();
         const geminiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
-        if (!openaiKey && !claudeKey && !geminiKey) return;
+        if (!openaiKey && !claudeKey && !geminiKey) {
+            addDebugLog('エラー: どのAIのAPIキーも設定されていません', '#ff4444');
+            return;
+        }
 
         const eventsToProcess = [...eventQueue];
         eventQueue = [];
@@ -585,6 +594,7 @@ ${chatNote}
 ━━━━━━━━━━━━━━━━━━━━━
 
 出力はJSON形式のみ。各コメントは { "text": "...", "color": "white"|"blue"|"green"|"red" } の形式で。
+※ 注意: "red" は完全に「5. 【MACHINA】」のキャラクターに合致するコメント（英語のみの不気味なコメント）の場合にのみ使用すること。一般コメント等で強調のために "red" を使うのは絶対禁止。
 {"comments": [...]}
 
 COMM ALLログ (古→新):
@@ -970,7 +980,7 @@ ${logLines}`;
         panel.id = 'niconico-panel';
         Object.assign(panel.style, {
             position: 'fixed',
-            top: '60px',
+            bottom: '30px',
             right: '10px',
             zIndex: '10001',
             background: 'rgba(0,0,0,0.85)',
@@ -992,7 +1002,7 @@ ${logLines}`;
             <div id="nico-drag-handle" style="font-weight:bold;margin-bottom:8px;letter-spacing:1px;border-bottom:1px solid #555;padding-bottom:5px;cursor:move;display:flex;align-items:center;justify-content:space-between;" title="ドラッグして移動">
                 <span style="display:flex;align-items:center;gap:8px;">
                     🎌 ニコニコインテルマップ
-                    <a href="https://github.com/MikanRobot/nico-intelmap" target="_blank" style="font-size:10px;color:#88aaff;text-decoration:none;background:rgba(91,143,255,0.15);border:1px solid rgba(91,143,255,0.4);border-radius:4px;padding:1px 6px;white-space:nowrap;">説明書</a>
+                    <a href="https://github.com/MikanRobot/nico-intelmap" target="_blank" style="font-size:10px;color:#88aaff;text-decoration:none;background:rgba(91,143,255,0.15);border:1px solid rgba(91,143,255,0.4);border-radius:4px;padding:1px 6px;white-space:nowrap;">詳細</a>
                 </span>
                 <button id="nico-toggle" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:0 4px;line-height:1;" title="折りたたむ">▼</button>
             </div>
