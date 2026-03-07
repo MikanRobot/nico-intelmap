@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.5
+// @version      1.1.7
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -592,6 +592,7 @@ ${chatNote}
 ━━━━━━━━━━━━━━━━━━━━━
 
 出力はJSON形式のみ。各コメントは { "text": "...", "color": "white"|"blue"|"green"|"red" } の形式で。
+※ 注意: "red" は完全に「5. 【MACHINA】」のキャラクターに合致するコメント（英語のみの不気味なコメント）の場合にのみ使用すること。一般コメント等で強調のために "red" を使うのは絶対禁止。
 {"comments": [...]}
 
 COMM ALLログ (古→新):
@@ -999,7 +1000,7 @@ ${logLines}`;
             <div id="nico-drag-handle" style="font-weight:bold;margin-bottom:8px;letter-spacing:1px;border-bottom:1px solid #555;padding-bottom:5px;cursor:move;display:flex;align-items:center;justify-content:space-between;" title="ドラッグして移動">
                 <span style="display:flex;align-items:center;gap:8px;">
                     🎌 ニコニコインテルマップ
-                    <a href="https://github.com/MikanRobot/nico-intelmap" target="_blank" style="font-size:10px;color:#88aaff;text-decoration:none;background:rgba(91,143,255,0.15);border:1px solid rgba(91,143,255,0.4);border-radius:4px;padding:1px 6px;white-space:nowrap;">GitHub (説明書)</a>
+                    <a href="https://github.com/MikanRobot/nico-intelmap" target="_blank" style="font-size:10px;color:#88aaff;text-decoration:none;background:rgba(91,143,255,0.15);border:1px solid rgba(91,143,255,0.4);border-radius:4px;padding:1px 6px;white-space:nowrap;">詳細</a>
                 </span>
                 <button id="nico-toggle" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:0 4px;line-height:1;" title="折りたたむ">▼</button>
             </div>
