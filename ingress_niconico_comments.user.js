@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.11
+// @version      1.1.12
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -383,9 +383,16 @@
         addDebugLog(`[${apiName}] AI回答(${comments.length}件): ${comments.map(c => `[${c.color}]${c.text}`).join(', ')}`, '#aaffaa');
 
         comments.forEach((comment, index) => {
-            // MACHINA(red)の強制バリデーション：AIが指示を無視して日本語を赤くした場合は白に戻す
-            if (comment.color === 'red' && /[ぁ-んァ-ヶｱ-ﾝﾞﾟ一-龠]/.test(comment.text)) {
-                comment.color = 'white';
+            // MACHINA(red)の強制バリデーション
+            if (comment.color === 'red') {
+                if (/[ぁ-んァ-ヶｱ-ﾝﾞﾟ一-龠]/.test(comment.text)) {
+                    // AIが指示を無視して日本語を赤くした場合は白に戻す
+                    comment.color = 'white';
+                } else {
+                    // 豆腐文字（Zalgo等の特殊Unicodeや絵文字）による画面破壊をふせぐため、
+                    // MACHINAとして生き残ったコメントは「半角英数字と基本記号（標準ASCII）」のみに強制フィルタリングする
+                    comment.text = comment.text.replace(/[^\x20-\x7E]/g, '');
+                }
             }
 
             const delay = Math.random() * 3000 + (index * 800);
@@ -594,8 +601,9 @@ ${chatNote}
    自陣営(ENL/緑)を称え相手陣営(RES/青)を皮肉る。直接攻撃的な言葉は使わない。
 
 5. 【MACHINA】（全体の1%以下・red）
-   不気味な内容の短い「英語のみ」のコメントを生成する。
-   文字化けを演出するため、Zalgo text等の特殊文字は絶対に避け、代わりに大文字と小文字を不規則に混ぜたり、普通の記号(. , - _ * # など)を単語の間に挟んで読みにくくする。
+   不気味な内容の短い「英語のみ」のコメントを生成する（※日本語は絶対に使用禁止）。
+   Zalgo text、絵文字、特殊なUnicode文字はシステムエラー(豆腐文字)になるため【絶対に使用禁止】。
+   半角のアルファベット、数字、基本記号( . , - _ * # ! ? ) のみを使用し、大文字小文字をランダムに混ぜることで不気味さを表現すること。
 ━━━━━━━━━━━━━━━━━━━━━
 
 出力はJSON形式のみ。各コメントは { "text": "...", "color": "white"|"blue"|"green"|"red" } の形式で。
