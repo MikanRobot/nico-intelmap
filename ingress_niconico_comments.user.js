@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.8
+// @version      1.1.9
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -425,8 +425,8 @@
                 temperature: 0.9
             }),
             onload: (response) => {
-                if (response.status === 429) {
-                    addDebugLog('[OpenAI] レートリミット。別APIを試みます...', '#ffaa44');
+                if (response.status === 429 || response.status >= 500) {
+                    addDebugLog(`[OpenAI] 一時的エラー(${response.status})。別APIを試みます...`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
@@ -471,8 +471,8 @@
                 ]
             }),
             onload: (response) => {
-                if (response.status === 429) {
-                    addDebugLog('[Claude] レートリミット。別APIを試みます...', '#ffaa44');
+                if (response.status === 429 || response.status >= 500) {
+                    addDebugLog(`[Claude] 一時的エラー(${response.status})。別APIを試みます...`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
@@ -514,8 +514,8 @@
                 }
             }),
             onload: (response) => {
-                if (response.status === 429) {
-                    addDebugLog('[Gemini] レートリミット。別APIを試みます...', '#ffaa44');
+                if (response.status === 429 || response.status >= 500) {
+                    addDebugLog(`[Gemini] 一時的エラー(${response.status})。別APIを試みます...`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
