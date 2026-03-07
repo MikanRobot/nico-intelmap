@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.9
+// @version      1.1.10
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -383,6 +383,11 @@
         addDebugLog(`[${apiName}] AI回答(${comments.length}件): ${comments.map(c => `[${c.color}]${c.text}`).join(', ')}`, '#aaffaa');
 
         comments.forEach((comment, index) => {
+            // MACHINA(red)の強制バリデーション：AIが指示を無視して日本語を赤くした場合は白に戻す
+            if (comment.color === 'red' && /[ぁ-んァ-ヶｱ-ﾝﾞﾟ一-龠]/.test(comment.text)) {
+                comment.color = 'white';
+            }
+
             const delay = Math.random() * 3000 + (index * 800);
             setTimeout(() => {
                 let color;
