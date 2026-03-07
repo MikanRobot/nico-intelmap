@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.7
+// @version      1.1.8
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -252,10 +252,10 @@
         // テキスト幅を取得してアニメーション時間を計算
         const textWidth = el.scrollWidth;
         const totalDist = screenWidth + textWidth;
-        const duration = Math.max(
-            CONFIG.minDuration,
-            (totalDist / CONFIG.scrollSpeed) * 1000
-        );
+
+        // ★修正点：文字の長さに依らず、一律で同じ時間（ミリ秒）かけて画面を通過するように固定する
+        // デフォルトでは 10000ms (10秒) とする。
+        const duration = 10000;
 
         // CSSアニメーションで流す (Machinaエフェクトがある場合はカンマ区切りで複数アニメーション適用)
         const keyframesName = `nicoScroll_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -276,8 +276,10 @@
             : scrollAnim;
 
         // レーンの次回利用可能時刻を更新
-        // テキストの先頭が画面左端を超えたあたりを基準にする
-        const laneBlockDuration = ((screenWidth + size * text.length * 0.6) / CONFIG.scrollSpeed) * 1000;
+        // コメント全体が画面右端から完全に出るまでの時間(画面幅 + テキスト幅)をdurationで割った割合から求める
+        // 例: duration 10秒で、テキスト幅が画面幅の半分なら、およそ5秒+3秒=8秒後には右端が空く
+        // 余裕を見て、テキストが完全に画面内に収まるまでの時間 (textWidth / totalDist * duration) 分を待つ
+        const laneBlockDuration = (textWidth / totalDist) * duration + 200; // +200msのバッファ
         lanes[laneIndex] = Date.now() + laneBlockDuration;
 
         // アニメーション終了後にDOMを削除
