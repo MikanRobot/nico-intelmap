@@ -1018,8 +1018,7 @@ ${logLines}`;
                         <label><input type="checkbox" id="nico-debug-enabled"> 🛠️ デバッグ表示</label>
                     </div>
                     <div id="nico-debug-log" style="display:none;background:#111;color:#ccc;font-size:11px;height:70px;overflow-y:auto;padding:4px;margin-bottom:8px;border:1px solid #444;border-radius:3px;word-break:break-all;"></div>
-                    <div style="text-align:right;">
-                        <button id="nico-force-run" style="background:#0066cc;border:none;color:#fff;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;">今すぐ流す</button>
+                    <div style="flex: 1;"></div>
                     </div>
                 </div>
 
@@ -1249,27 +1248,6 @@ ${logLines}`;
         // 起動時に保存済みキーを自動検証
         const savedGeminiKey = GM_getValue('NICO_GEMINI_API_KEY', '');
         if (savedGeminiKey) validateGeminiKey(savedGeminiKey);
-
-        // 手動更新（今すぐ流す）ボタン
-        document.getElementById('nico-force-run').addEventListener('click', () => {
-            if (window.addHook && window.portals !== undefined) {
-                // IITC環境
-                watchIITCComms(true);
-            } else {
-                // 純正環境
-                const commsArea = document.getElementById('commsArea') ||
-                    document.querySelector('[data-cy="comms-area"]') ||
-                    document.querySelector('.comms');
-                if (!commsArea) return;
-                const lines = Array.from(commsArea.querySelectorAll('tr, div.chat-line'));
-                for (const node of lines.slice(-5)) {
-                    processNativeCommsNode(node);
-                }
-            }
-
-            // 強制的にAI呼び出しをキックする（キューが空でも最後のバッファから生成）
-            triggerAiComment(true);
-        });
 
         // ▼トグル（タイトル行の折りたたみボタン）
         const nicoBody = document.getElementById('nico-body');
