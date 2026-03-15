@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.16
+// @version      1.1.17
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -369,7 +369,7 @@
             if (!isSpeaking) return; // キャンセルされた場合は次を呼ばない
             setTimeout(() => {
                 if (isSpeaking) processSpeechQueue();
-            }, 2000); // 2秒のインターバル
+            }, 1000); // 1秒のインターバル
         };
         uttr.onend = next;
         uttr.onerror = next;
