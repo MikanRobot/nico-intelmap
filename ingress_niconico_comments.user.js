@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.14
+// @version      1.1.15
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -382,6 +382,8 @@
 
         addDebugLog(`[${apiName}] AI回答(${comments.length}件): ${comments.map(c => `[${c.color}]${c.text}`).join(', ')}`, '#aaffaa');
 
+        let maxDelay = 0;
+
         comments.forEach((comment, index) => {
             // MACHINA(red)の強制バリデーション
             if (comment.color === 'red') {
@@ -396,12 +398,30 @@
             }
 
             const delay = Math.random() * 3000 + (index * 800);
+            if (delay > maxDelay) maxDelay = delay;
+            
             setTimeout(() => {
                 // コメントを読み上げる（設定が有効な場合）
                 if (GM_getValue('NICO_SPEECH_ENABLED', false)) {
                     const uttr = new SpeechSynthesisUtterance(comment.text);
-                    uttr.lang = comment.color === 'red' ? 'en-US' : 'ja-JP'; // MACHINAは英語っぽく、他は日本語で
-                    uttr.rate = 1.2; // 少しテンポよく
+                    const voices = speechSynthesis.getVoices();
+                    
+                    if (comment.color === 'red') {
+                        // MACHINA用: 冷静で優等生風な女性英語ボイス（Mac: Samantha等, Chrome: Google US English等）
+                        uttr.lang = 'en-US';
+                        uttr.rate = 0.95; // ややゆっくり冷静に
+                        uttr.pitch = 0.8; // 低めでクールな印象
+                        const engVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Samantha') || v.name.includes('Victoria') || v.name.includes('Karen') || v.name.includes('Google US') || v.name.includes('Female')));
+                        if (engVoice) uttr.voice = engVoice;
+                    } else {
+                        // 通常用: ゆっくり霊夢・魔理沙風の設定（ブラウザの日本語女性声 + ピッチ調整）
+                        uttr.lang = 'ja-JP';
+                        uttr.rate = 1.15; // 少しだけ速め
+                        uttr.pitch = 1.3; // ピッチを高めにしてゆっくり風を演出
+                        const jpVoice = voices.find(v => v.lang.startsWith('ja') && (v.name.includes('Kyoko') || v.name.includes('Google 日本語') || v.name.includes('Megumi')));
+                        if (jpVoice) uttr.voice = jpVoice;
+                    }
+                    
                     speechSynthesis.speak(uttr);
                 }
 
@@ -419,6 +439,14 @@
                 showComment(comment.text, color, size);
             }, delay);
         });
+
+        // すべてのコメントが「アニメーション終了（約10秒）」したタイミングで、たまっていたキューの音声を強制停止する
+        const scrollDuration = 10000;
+        setTimeout(() => {
+            if (GM_getValue('NICO_SPEECH_ENABLED', false)) {
+                speechSynthesis.cancel();
+            }
+        }, maxDelay + scrollDuration);
     }
 
     /**
