@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.13
+// @version      1.1.14
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -397,8 +397,8 @@
 
             const delay = Math.random() * 3000 + (index * 800);
             setTimeout(() => {
-                // 先頭のコメントを読み上げる（設定が有効な場合）
-                if (index === 0 && GM_getValue('NICO_SPEECH_ENABLED', false)) {
+                // コメントを読み上げる（設定が有効な場合）
+                if (GM_getValue('NICO_SPEECH_ENABLED', false)) {
                     const uttr = new SpeechSynthesisUtterance(comment.text);
                     uttr.lang = comment.color === 'red' ? 'en-US' : 'ja-JP'; // MACHINAは英語っぽく、他は日本語で
                     uttr.rate = 1.2; // 少しテンポよく
@@ -763,9 +763,9 @@ ${logLines}`;
             const label = isChat ? '[チャット]' : '[システム]';
             const logLine = `${label} ${text}`;
 
-            // 攻撃通知・中和通知行はバッファおよびAI送信をスキップ
-            if (text.includes('under attack by') || text.includes('neutralized by')) {
-                addDebugLog(`攻撃通知をスキップ: ${text.slice(0, 30)}...`, '#555555');
+            // 攻撃・中和通知・Battle Beacon等のシステム行はバッファおよびAI送信をスキップ
+            if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon on your')) {
+                addDebugLog(`システム通知をスキップ: ${text.slice(0, 30)}...`, '#555555');
                 continue;
             }
 
