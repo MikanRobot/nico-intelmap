@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ingress Intel ニコニコ風コメント
+// @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.20
-// @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
+// @version      1.1.21
+// @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @match        https://intel.ingress.com/*
@@ -37,7 +37,7 @@
     // AI用設定
     // =============================================
     const AI_CONFIG = {
-        // OpenAIに投げる間隔 (イベント発生時、最低これだけ待つ)
+        // APIに投げる間隔 (イベント発生時、最低これだけ待つ)
         cooldown: 15000,
         // 1つのプロンプトにまとめる最大イベント数
         maxEvents: 5,
@@ -295,7 +295,7 @@
     }
 
     // =============================================
-    // AI API連携 (OpenAI / Claude 自動選択)
+    // AI API連携 (OpenAI / Claude / Gemini 自動選択)
     // =============================================
 
     let eventQueue = [];
@@ -315,11 +315,12 @@
         // プラグインが無効なら何もしない
         if (!document.getElementById('nico-enabled')?.checked) return;
 
-        // OpenAI または Claude のどちらかにキーがあれば続行
+        // どこかのAPIキーが設定されていれば続行
         const openaiKey = GM_getValue('NICO_OPENAI_API_KEY', '').trim();
         const claudeKey = GM_getValue('NICO_CLAUDE_API_KEY', '').trim();
-        if (!openaiKey && !claudeKey) {
-            addDebugLog('API Keyが未設定です（OpenAI/Claude）', '#ff4444');
+        const geminiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
+        if (!openaiKey && !claudeKey && !geminiKey) {
+            addDebugLog('API Keyが未設定です（OpenAI/Claude/Geminiのいずれかが必要です）', '#ff4444');
             return;
         }
 
