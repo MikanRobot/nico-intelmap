@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.12
+// @version      1.1.13
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -397,6 +397,14 @@
 
             const delay = Math.random() * 3000 + (index * 800);
             setTimeout(() => {
+                // 先頭のコメントを読み上げる（設定が有効な場合）
+                if (index === 0 && GM_getValue('NICO_SPEECH_ENABLED', false)) {
+                    const uttr = new SpeechSynthesisUtterance(comment.text);
+                    uttr.lang = comment.color === 'red' ? 'en-US' : 'ja-JP'; // MACHINAは英語っぽく、他は日本語で
+                    uttr.rate = 1.2; // 少しテンポよく
+                    speechSynthesis.speak(uttr);
+                }
+
                 let color;
                 switch (comment.color) {
                     case 'blue': color = '#44aaff'; break; // レジスタンス青
@@ -1038,6 +1046,9 @@ ${logLines}`;
                         <span style="font-size:11px;color:#aaa;">個 (1〜100)</span>
                     </div>
                     <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid #444;">
+                        <label><input type="checkbox" id="nico-speech-enabled" ${GM_getValue('NICO_SPEECH_ENABLED', false) ? 'checked' : ''}> 🔊 音声読み上げ</label>
+                    </div>
+                    <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid #444;">
                         <label><input type="checkbox" id="nico-debug-enabled"> 🛠️ デバッグ表示</label>
                     </div>
                     <div id="nico-debug-log" style="display:none;background:#111;color:#ccc;font-size:11px;height:70px;overflow-y:auto;padding:4px;margin-bottom:8px;border:1px solid #444;border-radius:3px;word-break:break-all;"></div>
@@ -1122,6 +1133,14 @@ ${logLines}`;
             const val = Math.max(1, Math.min(100, parseInt(commentCountInput.value, 10) || 7));
             commentCountInput.value = val;
             GM_setValue('NICO_COMMENT_COUNT', val);
+        });
+
+        // 音声読み上げトグル
+        const speechCb = document.getElementById('nico-speech-enabled');
+        speechCb.addEventListener('change', () => {
+            GM_setValue('NICO_SPEECH_ENABLED', speechCb.checked);
+            // オフにした場合は再生中の音声を停止
+            if (!speechCb.checked) speechSynthesis.cancel();
         });
 
         // デバッグ表示トグル
