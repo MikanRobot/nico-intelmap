@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.19
+// @version      1.1.20
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -367,79 +367,41 @@
         document.addEventListener(e, unlockAudio, { once: true });
     });
 
-    let nicoQueue = [];
+    // 読み上げ専用の独立した音声キュー
+    let speechQueue = [];
     let isSpeaking = false;
 
-    function processNicoQueue() {
-        if (nicoQueue.length === 0) {
+    function processSpeechQueue() {
+        if (speechQueue.length === 0) {
             isSpeaking = false;
             return;
         }
         isSpeaking = true;
         
-        const comment = nicoQueue.shift();
+        const uttr = speechQueue.shift();
         
-        // 1. コメントの色とサイズを決定
-        let color;
-        switch (comment.color) {
-            case 'blue': color = '#44aaff'; break;
-            case 'green': color = '#44ff88'; break;
-            case 'red': color = FACTION_COLORS.MACHINA; break;
-            default: color = '#ffffff'; break;
-        }
-        let size = CONFIG.fontSize;
-        if (comment.color === 'white' && Math.random() < 0.1) size = CONFIG.fontSize * 1.5;
-
-        // 2. 文字を画面に流し始める（ここが「流れ出すタイミング」）
-        showComment(comment.text, color, size);
-
         const next = () => {
             if (!isSpeaking) return; // キャンセルされた場合は次を呼ばない
             setTimeout(() => {
-                if (isSpeaking) processNicoQueue();
+                if (isSpeaking) processSpeechQueue();
             }, 1000); // 1秒のインターバル
         };
 
-        // まだユーザーが画面を一度もクリック/タップしておらず、ブラウザによって音声再生がブロックされている場合はスキップ
-        if (!isAudioUnlocked && GM_getValue('NICO_SPEECH_ENABLED', false)) {
-            addDebugLog('⚠️ 画面をクリックするまで音声読み上げは再生されません', '#ffcc88');
-            next();
-            return;
-        }
-
-        // 3. 同時に音声読み上げを開始する
-        const uttr = new SpeechSynthesisUtterance(comment.text);
-        const voices = speechSynthesis.getVoices();
-        
-        if (comment.color === 'red') {
-            uttr.lang = 'en-US';
-            uttr.rate = 0.95;
-            uttr.pitch = 0.8;
-            const engVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Samantha') || v.name.includes('Victoria') || v.name.includes('Karen') || v.name.includes('Google US') || v.name.includes('Female')));
-            if (engVoice) uttr.voice = engVoice;
-        } else {
-            uttr.lang = 'ja-JP';
-            uttr.rate = 1.15;
-            uttr.pitch = 1.3;
-            const jpVoice = voices.find(v => v.lang.startsWith('ja') && (v.name.includes('Kyoko') || v.name.includes('Google 日本語') || v.name.includes('Megumi')));
-            if (jpVoice) uttr.voice = jpVoice;
-        }
-        
         uttr.onend = next;
         uttr.onerror = next;
         
         speechSynthesis.speak(uttr);
     }
 
-    function enqueueNicoComment(comment) {
-        nicoQueue.push(comment);
+    function enqueueSpeech(uttr) {
+        speechQueue.push(uttr);
         if (!isSpeaking) {
-            processNicoQueue();
+            processSpeechQueue();
         }
     }
 
     function cancelAllSpeech() {
-        nicoQueue = [];
+        speechQueue = [];
         isSpeaking = false;
         speechSynthesis.cancel();
     }
@@ -478,6 +440,7 @@
         addDebugLog(`[${apiName}] AI回答(${comments.length}件): ${comments.map(c => `[${c.color}]${c.text}`).join(', ')}`, '#aaffaa');
 
         const isSpeechEnabled = GM_getValue('NICO_SPEECH_ENABLED', false);
+        let maxDelay = 0;
 
         comments.forEach((comment, index) => {
             // MACHINA(red)の強制バリデーション
@@ -492,26 +455,63 @@
                 }
             }
 
-            if (isSpeechEnabled) {
-                // 音声有効時はキューに入れて、テキスト表示と音声を完全に同期させる
-                enqueueNicoComment(comment);
-            } else {
-                // 音声無効時はランダムなディレイで画面に流すだけ
-                const delay = Math.random() * 3000 + (index * 800);
-                setTimeout(() => {
-                    let color;
-                    switch (comment.color) {
-                        case 'blue': color = '#44aaff'; break;
-                        case 'green': color = '#44ff88'; break;
-                        case 'red': color = FACTION_COLORS.MACHINA; break;
-                        default: color = '#ffffff'; break;
+            // 画面に流すタイミングをランダムに分散（ただし順序はある程度保つ）
+            const delay = Math.random() * 3000 + (index * 800);
+            if (delay > maxDelay) maxDelay = delay;
+
+            setTimeout(() => {
+                let color;
+                switch (comment.color) {
+                    case 'blue': color = '#44aaff'; break;
+                    case 'green': color = '#44ff88'; break;
+                    case 'red': color = FACTION_COLORS.MACHINA; break;
+                    default: color = '#ffffff'; break;
+                }
+                let size = CONFIG.fontSize;
+                if (comment.color === 'white' && Math.random() < 0.1) size = CONFIG.fontSize * 1.5;
+                
+                // 1. 文字を画面に流し始める
+                showComment(comment.text, color, size);
+
+                // 2. 音声有効なら読み上げキューに登録（文字が流れ出した順番にエンキューされる）
+                if (isSpeechEnabled) {
+                    // オーディオ未ロック時はスキップ
+                    if (!isAudioUnlocked) {
+                        if (index === 0) addDebugLog('⚠️ 画面をクリックするまで音声読み上げはブロックされます', '#ffcc88');
+                        return;
                     }
-                    let size = CONFIG.fontSize;
-                    if (comment.color === 'white' && Math.random() < 0.1) size = CONFIG.fontSize * 1.5;
-                    showComment(comment.text, color, size);
-                }, delay);
-            }
+
+                    const uttr = new SpeechSynthesisUtterance(comment.text);
+                    const voices = speechSynthesis.getVoices();
+
+                    if (comment.color === 'red') {
+                        // MACHINA用: 冷静で優等生風な女性英語ボイス
+                        uttr.lang = 'en-US';
+                        uttr.rate = 0.95;
+                        uttr.pitch = 0.8;
+                        const engVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Samantha') || v.name.includes('Victoria') || v.name.includes('Karen') || v.name.includes('Google US') || v.name.includes('Female')));
+                        if (engVoice) uttr.voice = engVoice;
+                    } else {
+                        // 通常用: ゆっくり霊夢・魔理沙風の設定
+                        uttr.lang = 'ja-JP';
+                        uttr.rate = 1.15;
+                        uttr.pitch = 1.3;
+                        const jpVoice = voices.find(v => v.lang.startsWith('ja') && (v.name.includes('Kyoko') || v.name.includes('Google 日本語') || v.name.includes('Megumi')));
+                        if (jpVoice) uttr.voice = jpVoice;
+                    }
+
+                    enqueueSpeech(uttr);
+                }
+            }, delay);
         });
+
+        // すべてのコメントが「アニメーション終了（約10秒）」したタイミングで、たまっていたキューの音声を強制停止する
+        const scrollDuration = 10000;
+        setTimeout(() => {
+            if (GM_getValue('NICO_SPEECH_ENABLED', false)) {
+                cancelAllSpeech();
+            }
+        }, maxDelay + scrollDuration);
     }
 
     /**
