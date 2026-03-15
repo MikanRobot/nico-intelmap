@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.15
+// @version      1.1.16
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -349,6 +349,47 @@
         }, timeToWait);
     }
 
+    // =============================================
+    // 音声合成(TTS)のキュー管理
+    // =============================================
+    
+    let speechQueue = [];
+    let isSpeaking = false;
+
+    function processSpeechQueue() {
+        if (speechQueue.length === 0) {
+            isSpeaking = false;
+            return;
+        }
+        isSpeaking = true;
+        
+        const uttr = speechQueue.shift();
+        
+        const next = () => {
+            if (!isSpeaking) return; // キャンセルされた場合は次を呼ばない
+            setTimeout(() => {
+                if (isSpeaking) processSpeechQueue();
+            }, 2000); // 2秒のインターバル
+        };
+        uttr.onend = next;
+        uttr.onerror = next;
+        
+        speechSynthesis.speak(uttr);
+    }
+
+    function enqueueSpeech(uttr) {
+        speechQueue.push(uttr);
+        if (!isSpeaking) {
+            processSpeechQueue();
+        }
+    }
+
+    function cancelAllSpeech() {
+        speechQueue = [];
+        isSpeaking = false;
+        speechSynthesis.cancel();
+    }
+
     /**
      * AIのレスポンスをパースしてコメントを画面に流す（共通処理）
      * @param {string} content - APIが返したテキスト
@@ -399,13 +440,13 @@
 
             const delay = Math.random() * 3000 + (index * 800);
             if (delay > maxDelay) maxDelay = delay;
-            
+
             setTimeout(() => {
                 // コメントを読み上げる（設定が有効な場合）
                 if (GM_getValue('NICO_SPEECH_ENABLED', false)) {
                     const uttr = new SpeechSynthesisUtterance(comment.text);
                     const voices = speechSynthesis.getVoices();
-                    
+
                     if (comment.color === 'red') {
                         // MACHINA用: 冷静で優等生風な女性英語ボイス（Mac: Samantha等, Chrome: Google US English等）
                         uttr.lang = 'en-US';
@@ -421,8 +462,7 @@
                         const jpVoice = voices.find(v => v.lang.startsWith('ja') && (v.name.includes('Kyoko') || v.name.includes('Google 日本語') || v.name.includes('Megumi')));
                         if (jpVoice) uttr.voice = jpVoice;
                     }
-                    
-                    speechSynthesis.speak(uttr);
+                    enqueueSpeech(uttr);
                 }
 
                 let color;
@@ -444,7 +484,7 @@
         const scrollDuration = 10000;
         setTimeout(() => {
             if (GM_getValue('NICO_SPEECH_ENABLED', false)) {
-                speechSynthesis.cancel();
+                cancelAllSpeech();
             }
         }, maxDelay + scrollDuration);
     }
@@ -792,7 +832,7 @@ ${logLines}`;
             const logLine = `${label} ${text}`;
 
             // 攻撃・中和通知・Battle Beacon等のシステム行はバッファおよびAI送信をスキップ
-            if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon on your')) {
+            if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon')) {
                 addDebugLog(`システム通知をスキップ: ${text.slice(0, 30)}...`, '#555555');
                 continue;
             }
