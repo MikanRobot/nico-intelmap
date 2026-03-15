@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ingress Intel ニコニコ風コメント
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.18
+// @version      1.1.19
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（OpenAI AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -350,9 +350,23 @@
     }
 
     // =============================================
-    // コメント＆音声(TTS)の同期キュー管理
+    // コメント＆音声(TTS)の同期キュー管理とブロック解除
     // =============================================
     
+    let isAudioUnlocked = false;
+    const unlockAudio = () => {
+        if (isAudioUnlocked) return;
+        isAudioUnlocked = true;
+        // ブラウザの自動再生ブロックを解除するため、ユーザーアクション時に無音の音声を流してエンジンを起動する
+        const uttr = new SpeechSynthesisUtterance('');
+        uttr.volume = 0;
+        speechSynthesis.speak(uttr);
+        addDebugLog('🔊 音声エンジンのロックが解除されました', '#aaffaa');
+    };
+    ['click', 'mousedown', 'keydown', 'touchstart'].forEach(e => {
+        document.addEventListener(e, unlockAudio, { once: true });
+    });
+
     let nicoQueue = [];
     let isSpeaking = false;
 
@@ -379,6 +393,20 @@
         // 2. 文字を画面に流し始める（ここが「流れ出すタイミング」）
         showComment(comment.text, color, size);
 
+        const next = () => {
+            if (!isSpeaking) return; // キャンセルされた場合は次を呼ばない
+            setTimeout(() => {
+                if (isSpeaking) processNicoQueue();
+            }, 1000); // 1秒のインターバル
+        };
+
+        // まだユーザーが画面を一度もクリック/タップしておらず、ブラウザによって音声再生がブロックされている場合はスキップ
+        if (!isAudioUnlocked && GM_getValue('NICO_SPEECH_ENABLED', false)) {
+            addDebugLog('⚠️ 画面をクリックするまで音声読み上げは再生されません', '#ffcc88');
+            next();
+            return;
+        }
+
         // 3. 同時に音声読み上げを開始する
         const uttr = new SpeechSynthesisUtterance(comment.text);
         const voices = speechSynthesis.getVoices();
@@ -397,12 +425,6 @@
             if (jpVoice) uttr.voice = jpVoice;
         }
         
-        const next = () => {
-            if (!isSpeaking) return; // キャンセルされた場合は次を呼ばない
-            setTimeout(() => {
-                if (isSpeaking) processNicoQueue();
-            }, 1000); // 1秒のインターバル
-        };
         uttr.onend = next;
         uttr.onerror = next;
         
