@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.21
+// @version      1.1.22
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -836,10 +836,30 @@ ${logLines}`;
         }
 
         let hasNew = false;
+        let currentTimestamp = -1;
+        let groupedLogs = [];
+        let isChatGroup = false;
+
+        const flushGroup = () => {
+            if (groupedLogs.length === 0) return;
+            let mergedLine = '';
+            if (groupedLogs.length === 1) {
+                mergedLine = groupedLogs[0];
+            } else {
+                mergedLine = `(同時刻${groupedLogs.length}連ログ) ` + groupedLogs.join(' / ');
+            }
+            commLogBuffer.push(mergedLine);
+            if (commLogBuffer.length > COMM_LOG_MAX) commLogBuffer.shift();
+            queueAiEvent(mergedLine, isChatGroup);
+            groupedLogs = [];
+            isChatGroup = false;
+        };
+
         for (const [guid, entry] of entries) {
             if (lastCommsMessages.has(guid)) continue;
             lastCommsMessages.add(guid);
 
+            const timestamp = entry[1];
             const plext = entry[2] && entry[2].plext;
             if (!plext) continue;
 
@@ -863,13 +883,17 @@ ${logLines}`;
                 continue;
             }
 
-            // COMM ALLバッファに蓄積
-            commLogBuffer.push(logLine);
-            if (commLogBuffer.length > COMM_LOG_MAX) commLogBuffer.shift();
-
-            queueAiEvent(logLine, isChat);
+            // 同時刻のものをグループ化する
+            if (currentTimestamp !== -1 && currentTimestamp !== timestamp) {
+                flushGroup();
+            }
+            
+            currentTimestamp = timestamp;
+            groupedLogs.push(logLine);
+            if (isChat) isChatGroup = true;
             hasNew = true;
         }
+        flushGroup();
 
         if (hasNew) {
             addDebugLog(`COMM ALLを読み込みました (バッファ ${commLogBuffer.length}件)`, '#66aaff');
@@ -959,8 +983,28 @@ ${logLines}`;
         const sorted = [...results].sort((a, b) => a[1] - b[1]);
 
         let hasNew = false;
+        let currentTimestamp = -1;
+        let groupedLogs = [];
+        let isChatGroup = false;
+
+        const flushGroup = () => {
+            if (groupedLogs.length === 0) return;
+            let mergedLine = '';
+            if (groupedLogs.length === 1) {
+                mergedLine = groupedLogs[0];
+            } else {
+                mergedLine = `(同時刻${groupedLogs.length}連ログ) ` + groupedLogs.join(' / ');
+            }
+            commLogBuffer.push(mergedLine);
+            if (commLogBuffer.length > COMM_LOG_MAX) commLogBuffer.shift();
+            queueAiEvent(mergedLine, isChatGroup);
+            groupedLogs = [];
+            isChatGroup = false;
+        };
+
         for (const entry of sorted) {
             const guid = entry[0];
+            const timestamp = entry[1];
             if (lastCommsMessages.has(guid)) continue;
             lastCommsMessages.add(guid);
 
@@ -981,18 +1025,22 @@ ${logLines}`;
             const label = isChat ? '[チャット]' : '[システム]';
             const logLine = `${label} ${text}`;
 
-            // 攻撃通知・中和通知行はバッファおよびAI送信をスキップ
-            if (text.includes('under attack by') || text.includes('neutralized by')) {
-                addDebugLog(`攻撃通知をスキップ: ${text.slice(0, 30)}...`, '#555555');
+            // 攻撃通知・中和通知・Battle Beacon等の行はバッファおよびAI送信をスキップ
+            if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon')) {
+                addDebugLog(`通知をスキップ: ${text.slice(0, 30)}...`, '#555555');
                 continue;
             }
 
-            commLogBuffer.push(logLine);
-            if (commLogBuffer.length > COMM_LOG_MAX) commLogBuffer.shift();
-
-            queueAiEvent(logLine, isChat);
+            if (currentTimestamp !== -1 && currentTimestamp !== timestamp) {
+                flushGroup();
+            }
+            
+            currentTimestamp = timestamp;
+            groupedLogs.push(logLine);
+            if (isChat) isChatGroup = true;
             hasNew = true;
         }
+        flushGroup();
 
         if (hasNew) {
             addDebugLog(`ネットワークからCOMM ALLを取得 (バッファ ${commLogBuffer.length}件)`, '#66aaff');
