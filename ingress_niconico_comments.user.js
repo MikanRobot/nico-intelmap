@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.22
+// @version      1.1.23
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -407,6 +407,12 @@
         speechSynthesis.cancel();
     }
 
+    function stopSpeechQueueGracefully() {
+        // 現在読み上げ待ちのキューだけを空にする
+        // speechSynthesis.cancel() を呼ばないことで、現在再生中の音声だけは途中でブツ切りにならず最後まで読まれる
+        speechQueue = [];
+    }
+
     /**
      * AIのレスポンスをパースしてコメントを画面に流す（共通処理）
      * @param {string} content - APIが返したテキスト
@@ -506,11 +512,11 @@
             }, delay);
         });
 
-        // すべてのコメントが「アニメーション終了（約10秒）」したタイミングで、たまっていたキューの音声を強制停止する
+        // すべてのコメントが「アニメーション終了（約10秒）」したタイミングで、順番待ちの音声キューを破棄して自然停止させる
         const scrollDuration = 10000;
         setTimeout(() => {
             if (GM_getValue('NICO_SPEECH_ENABLED', false)) {
-                cancelAllSpeech();
+                stopSpeechQueueGracefully();
             }
         }, maxDelay + scrollDuration);
     }
