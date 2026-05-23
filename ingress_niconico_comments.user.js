@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.1.24
+// @version      1.2.0
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -16,59 +16,59 @@
     'use strict';
 
     // =============================================
-    // スキャナーHUD初期動作パラメータ（XM同期設定）
+    // コメント表示の初期設定（スクロール・フォント等）
     // =============================================
     const CONFIG = {
-        // XMコメントストリームの空間伝播速度 (px/秒)
+        // コメントの移動速度 (px/秒)
         scrollSpeed: 198,
-        // XMテキストパターンの基本投影サイズ (px)
+        // コメントの基本フォントサイズ (px)
         fontSize: 24,
-        // チャネルレーンの最大周波数スロット数
+        // コメントを流すレーンの最大数
         maxLanes: 8,
-        // XMコメントがHUD上に残留する最低励起時間 (ms)
+        // コメントが表示される最低時間 (ms)
         minDuration: 4000,
-        // 投影される粒子のオパシティ（透明度）
+        // コメントの透明度 (0.0〜1.0)
         opacity: 0.85,
-        // デバッグログ出力制御（開発者モード共鳴）
+        // デバッグログ出力フラグ
         debug: false,
     };
 
     // =============================================
-    // 人工知性体（ADA/Jarvis）コグニティブ共鳴パラメータ
+    // AIコメント生成用の初期設定
     // =============================================
     const AI_CONFIG = {
-        // 外部XM知性体へのリクエスト送信最低インターバル (ms)
+        // APIリクエストの最小クールダウン時間 (ms)
         cooldown: 15000,
-        // 1回のアライメントで同期する最大XMイベントログ数
+        // 1回のリクエストに含める最大イベント数
         maxEvents: 5,
-        // ADA/Jarvis返答投影の共鳴波長（ピンク系）
+        // AIコメントの表示文字色
         color: '#ff99ff',
     };
 
     // =============================================
-    // 各派閥（Faction）の共鳴XM波長カラー定義
+    // 各派閥（陣営）のテーマカラー定義
     // =============================================
     const FACTION_COLORS = {
-        RESISTANCE: '#00c8ff',   // レジスタンス青（人類の知性と自由の守護）
-        ENLIGHTENED: '#01ff01',  // エンライテンド緑（シェイパーの啓示と進化）
-        NEUTRAL: '#ffcc00',      // ニュートラル黄（未中和ポータル共鳴）
-        MACHINA: '#ff3333',      // マキナ赤（異常人工知能の自己増殖）
-        SYSTEM: '#ffffff',       // システム通知（スキャナー生ログ）
-        ALERT: '#ff4444',        // 異常警告（ポータルハザード）
+        RESISTANCE: '#00c8ff',   // Resistance（青）
+        ENLIGHTENED: '#01ff01',  // Enlightened（緑）
+        NEUTRAL: '#ffcc00',      // Neutral（黄：中立）
+        MACHINA: '#ff3333',      // Machina（赤：NPC陣営）
+        SYSTEM: '#ffffff',       // システムメッセージ
+        ALERT: '#ff4444',        // 警告メッセージ
     };
 
     // =============================================
-    // XMストリーム可視化HUDのデプロイ
+    // オーバーレイ表示用グローバル変数
     // =============================================
     let commentContainer = null;
-    let lanes = [];           // チャネルスロットの次回励起可能時刻
-    let activeCommentCount = 0; // HUD上のアクティブ共鳴コメント粒子数（TTS同期用）
+    let lanes = [];           // 各レーンの次回コメント配置可能時刻
+    let activeCommentCount = 0; // 画面上のアクティブなコメント要素の数（TTS同期用）
 
     /**
-     * XMコメント投影用HUDコンテナを初期化（デプロイ）する
+     * コメント表示用オーバーレイコンテナを初期化する
      */
     function initOverlay() {
-        // 既存のHUDコンテナがあればマトリクスをクリア
+        // 既存のオーバーレイ要素があれば削除
         const existing = document.getElementById('niconico-overlay');
         if (existing) existing.remove();
 
@@ -80,28 +80,28 @@
             left: '0',
             width: '100vw',
             height: '100vh',
-            pointerEvents: 'none',   // 実地スキャナー操作を阻害しない
+            pointerEvents: 'none',   // 下層のマップのクリック・ドラッグ操作を阻害しない
             overflow: 'hidden',
             zIndex: '10000',
             fontFamily: '"Noto Sans JP", "M PLUS 1p", sans-serif',
         });
         document.body.appendChild(commentContainer);
 
-        // レーン周波数管理のコールドスタート
+        // レーン配列を初期化
         lanes = new Array(CONFIG.maxLanes).fill(0);
 
-        // スキャナーメイン画面に投影領域を同調
+        // 表示領域をインテルマップのサイズに合わせる
         fitToMap();
         log('HUD投影レイヤーをデプロイしました');
     }
 
     /**
-     * HUDの投影領域をIntelマップキャンバスの座標に完全に同調させる
+     * オーバーレイ表示領域をマップキャンバスの座標に合わせる
      */
     function fitToMap() {
         if (!commentContainer) return;
 
-        // Ingress Intel / IITCスキャナーの座標系を探知
+        // IITCまたは純正Intel MapのDOM要素を取得
         const mapEl = document.getElementById('map_canvas')
             || document.getElementById('map')
             || document.querySelector('.leaflet-container')
@@ -116,7 +116,7 @@
                 height: `${r.height}px`,
             });
         } else {
-            // スキャナーHUDが未検出時のフォールバック処理
+            // マップ要素が見つからない場合のデフォルトサイズ設定
             Object.assign(commentContainer.style, {
                 top: '60px',
                 left: '0',
@@ -126,10 +126,10 @@
         }
     }
 
-    // スキャナーHUDサイズ変更のトラッキング
+    // ウィンドウリサイズ時の追従処理
     window.addEventListener('resize', fitToMap);
 
-    // スキャナーマップノード出現の監視とアタッチ
+    // マップ要素がロードされるのを待機してアタッチする
     (function waitForMap() {
         const mapEl = document.getElementById('map_canvas')
             || document.querySelector('.leaflet-container');
@@ -144,12 +144,12 @@
     })();
 
     // =============================================
-    // XMコメント 空間投影エンジン
+    // コメント描画・スクロール処理
     // =============================================
 
     /**
-     * 空いている共鳴チャネルスロットをスキャンして返す
-     * すべて励起中の場合は最も早く空くチャネルを選択
+     * 空いているコメントレーンを検索して返す
+     * すべて埋まっている場合は、最も早く空く予定のレーンを返す
      */
     function getAvailableLane() {
         const now = Date.now();
@@ -169,7 +169,7 @@
     }
 
     /**
-     * HUDデバッグコンソールへのシステムログ出力
+     * デバッグ用ログパネルに一行出力
      */
     function addDebugLog(text, color = '#cccccc') {
         const logBox = document.getElementById('nico-debug-log');
@@ -183,10 +183,10 @@
     }
 
     /**
-     * XMストリームコメントをHUD上に投影する
-     * @param {string} text    - 投影テキスト
-     * @param {string} color   - 共鳴波長カラー
-     * @param {number} size    - テキスト投影スケール
+     * コメントを画面上に流す処理
+     * @param {string} text    - コメント文字列
+     * @param {string} color   - 文字色
+     * @param {number} size    - フォントサイズ
      */
     function showComment(text, color = FACTION_COLORS.SYSTEM, size = CONFIG.fontSize) {
         if (!commentContainer) return;
@@ -194,19 +194,19 @@
         const screenWidth = window.innerWidth;
         const screenHeight = window.innerHeight;
 
-        // レーンチャネルの割り当て
+        // 割り当てるレーンと座標の決定
         const laneIndex = getAvailableLane();
         const laneHeight = screenHeight / CONFIG.maxLanes;
         const topPos = laneIndex * laneHeight + (laneHeight - size) / 2;
 
-        // XMホログラムノードの構築
+        // コメントのDOM要素を作成
         const el = document.createElement('span');
         el.textContent = text;
 
         let customStyle = {
             position: 'absolute',
             top: `${topPos}px`,
-            left: `${screenWidth}px`,   // 画面外（右端）からスキャンイン
+            left: `${screenWidth}px`,   // 画面右端から表示開始
             fontSize: `${size}px`,
             fontWeight: 'bold',
             color: color,
@@ -217,7 +217,7 @@
             transition: 'none',
         };
 
-        // マキナ赤（MACHINA）の場合は特殊な周波数歪み（グリッチ）を発生させる
+        // MACHINA（赤）の場合は特殊なグリッチエフェクトを適用
         let machinaAnimation = '';
         if (color === FACTION_COLORS.MACHINA || color === 'red' || color === '#ff3333') {
             customStyle.fontFamily = '"Courier New", Courier, monospace';
@@ -226,7 +226,7 @@
             customStyle.letterSpacing = '2px';
             customStyle.opacity = '0.9';
 
-            // グリッチ干渉キーフレームが未登録の場合はロード
+            // グリッチアニメーションのスタイルをheadに注入
             if (!document.getElementById('nico-machina-glitch')) {
                 const style = document.createElement('style');
                 style.id = 'nico-machina-glitch';
@@ -247,14 +247,14 @@
         Object.assign(el.style, customStyle);
         commentContainer.appendChild(el);
 
-        // テキスト幅から空間移動パラメータを算出
+        // コメント文字列の幅から移動距離を計算
         const textWidth = el.scrollWidth;
         const totalDist = screenWidth + textWidth;
 
-        // ホログラム通過時間は一律10秒（XMストームの安定化）
+        // スクロールアニメーション時間は10秒固定
         const duration = 10000;
 
-        // CSSアニメーションジェネレーターの動的共鳴
+        // スクロール用のアニメーション定義（@keyframes）を動的に生成
         const keyframesName = `nicoScroll_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         const styleEl = document.createElement('style');
         styleEl.textContent = `
@@ -267,12 +267,12 @@
 
         const scrollAnim = `${keyframesName} ${duration}ms linear forwards`;
 
-        // 異常人工知能の干渉と通常ストリームアニメーションの同時適用
+        // MACHINAのグリッチとスクロールアニメーションを同時に適用
         el.style.animation = machinaAnimation
             ? `${machinaAnimation}, ${scrollAnim}`
             : scrollAnim;
 
-        // 次のXM粒子がレーンに入り込むまでのバッファタイムを確保
+        // 次のコメントが同じレーンに流れるまでの衝突防止バッファを計算
         const laneBlockDuration = (textWidth / totalDist) * duration + 200;
         lanes[laneIndex] = Date.now() + laneBlockDuration;
 
@@ -308,25 +308,25 @@
     }
 
     // =============================================
-    // 外部XMコグニティブグリッド（OpenAI/Claude/Gemini）連携プロトコル
+    // API（OpenAI / Claude / Gemini）連携処理
     // =============================================
 
     let eventQueue = [];
     let lastAiCall = 0;
     let aiTimeout = null;
-    let hasChatLog = false; // バッファ内にAG（エージェント）の生チャットが含まれるか
+    let hasChatLog = false; // 直前のCOMMログ内にエージェントのチャット発言が含まれるか
 
     /**
-     * 検知したXMイベントデータをコグニティブキューにスタックする
+     * 検知したイベントデータをAIコメント用のキューに蓄積
      */
     function queueAiEvent(rawText, isChat = false) {
         addDebugLog(`イベント検知: ${rawText.slice(0, 30)}...`, '#888888');
         if (isChat) hasChatLog = true;
 
-        // スキャナーHUDがオフラインならスタックを保留
+        // プラグインが無効化されている場合は処理しない
         if (!document.getElementById('nico-enabled')?.checked) return;
 
-        // コグニティブグリッドの接続チェック
+        // APIキーが設定されているか確認
         const openaiKey = GM_getValue('NICO_OPENAI_API_KEY', '').trim();
         const claudeKey = GM_getValue('NICO_CLAUDE_API_KEY', '').trim();
         const geminiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
@@ -337,14 +337,14 @@
 
         eventQueue.push(rawText);
         if (eventQueue.length > AI_CONFIG.maxEvents) {
-            eventQueue.shift(); // 最古のイベントバッファをクリア
+            eventQueue.shift(); // キューサイズ上限を超えた古いイベントを削除
         }
 
         scheduleAiCall();
     }
 
     /**
-     * コグニティブプロセッサのオーバーロード防止（クールダウン制御）
+     * APIリクエストの連続実行を抑止（クールダウン）
      */
     function scheduleAiCall() {
         if (aiTimeout) clearTimeout(aiTimeout);
@@ -361,14 +361,14 @@
     }
 
     // =============================================
-    // 音声合成（TTS）出力共鳴の同期制御
+    // 音声読み上げ（TTS）制御処理
     // =============================================
     
     let isAudioUnlocked = false;
     const unlockAudio = () => {
         if (isAudioUnlocked) return;
         isAudioUnlocked = true;
-        // スキャナーのオーディオチャネルをユーザー入力によって励起する（無音ダミー共鳴）
+        // ユーザー操作を契機に音声合成のミュート解除を行う（Safari等の対策）
         const uttr = new SpeechSynthesisUtterance('');
         uttr.volume = 0;
         speechSynthesis.speak(uttr);
@@ -382,7 +382,7 @@
     let isSpeaking = false;
 
     /**
-     * 音声共鳴スロットを順次消費する
+     * キューから発話データを取得して再生
      */
     function processSpeechQueue() {
         if (speechQueue.length === 0) {
@@ -397,7 +397,7 @@
             if (!isSpeaking) return;
             setTimeout(() => {
                 if (isSpeaking) processSpeechQueue();
-            }, 1000); // 共鳴の残響を抑えるためのインターバル
+            }, 1000); // 次の発話までのインターバルタイム
         };
 
         uttr.onend = next;
@@ -424,9 +424,9 @@
     }
 
     /**
-     * 外部XMコグニティブグリッドの応答をデコードしてHUD投影に渡す
-     * @param {string} content - JSONエンコードされたコグニティブデータ
-     * @param {string} apiName - コグニティブグリッドのセクター名
+     * APIから返却されたAIコメントを整形・表示・読み上げする処理
+     * @param {string} content - APIのJSONレスポンス
+     * @param {string} apiName - 使用したAPIモデルの名称
      */
     function handleAiComments(content, apiName) {
         const cleaned = content
@@ -458,16 +458,16 @@
         let maxDelay = 0;
 
         comments.forEach((comment, index) => {
-            // マキナ赤（MACHINA）の異常フォールバック検証
+            // MACHINA（赤）用の文字フィルタリング処理
             if (comment.color === 'red') {
                 if (/[ぁ-んァ-ヶｱ-ﾝﾞﾟ一-龠]/.test(comment.text)) {
-                    comment.color = 'white'; // 異常赤に日本語が混入した場合は白色シグナルへ補正
+                    comment.color = 'white'; // 赤コメントに日本語が混じっていた場合は白（一般コメント）へ変換
                 } else {
-                    comment.text = comment.text.replace(/[^\x20-\x7E]/g, ''); // 半角ASCII規格のみに厳格圧縮
+                    comment.text = comment.text.replace(/[^\x20-\x7E]/g, ''); // 半角ASCII以外の文字を削除
                 }
             }
 
-            // 投影パルスをランダムに散布して衝突を回避
+            // 描画開始時間をランダムに遅延させて重なりを軽減
             const delay = Math.random() * 3000 + (index * 800);
             if (delay > maxDelay) maxDelay = delay;
 
@@ -480,7 +480,7 @@
                     default: color = '#ffffff'; break;
                 }
                 let size = CONFIG.fontSize;
-                if (comment.color === 'white' && Math.random() < 0.1) size = CONFIG.fontSize * 1.5; // 低確率で巨大化するXMの特異点
+                if (comment.color === 'white' && Math.random() < 0.1) size = CONFIG.fontSize * 1.5; // 10%の確率で文字サイズを1.5倍にする
                 
                 showComment(comment.text, color, size);
 
@@ -494,14 +494,14 @@
                     const voices = speechSynthesis.getVoices();
 
                     if (comment.color === 'red') {
-                        // マキナ異常音声：ADAに似た冷徹な英語合成波
+                        // MACHINA専用の英語音声設定
                         uttr.lang = 'en-US';
                         uttr.rate = 0.95;
                         uttr.pitch = 0.8;
                         const engVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Samantha') || v.name.includes('Victoria') || v.name.includes('Karen') || v.name.includes('Google US') || v.name.includes('Female')));
                         if (engVoice) uttr.voice = engVoice;
                     } else {
-                        // 通常エージェント音声：ゆっくり調相音
+                        // 一般エージェント用の日本語音声設定
                         uttr.lang = 'ja-JP';
                         uttr.rate = 1.15;
                         uttr.pitch = 1.3;
@@ -516,7 +516,7 @@
     }
 
     /**
-     * コグニティブグリッド・セクター「OpenAI (GPT)」への共鳴パルス送信
+     * OpenAI APIを呼び出してAIコメントを生成
      */
     function callOpenAI(prompt, commentCount, onRetry) {
         const apiKey = GM_getValue('NICO_OPENAI_API_KEY', '').trim();
@@ -562,7 +562,7 @@
     }
 
     /**
-     * コグニティブグリッド・セクター「Claude (Anthropic)」への共鳴パルス送信
+     * Claude APIを呼び出してAIコメントを生成
      */
     function callClaude(prompt, commentCount, onRetry) {
         const apiKey = GM_getValue('NICO_CLAUDE_API_KEY', '').trim();
@@ -608,7 +608,7 @@
     }
 
     /**
-     * コグニティブグリッド・セクター「Gemini (Google)」への共鳴パルス送信
+     * Gemini APIを呼び出してAIコメントを生成
      */
     function callGemini(prompt, commentCount, onRetry) {
         const apiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
@@ -650,7 +650,7 @@
     }
 
     /**
-     * コグニティブ共鳴波を起動し、ログデータからエージェントのコメントを具現化する
+     * APIを呼び出してAIコメントを生成・トリガーする
      */
     function triggerAiComment(isForce = false) {
         if (eventQueue.length === 0 && !isForce) return;
@@ -686,7 +686,7 @@ ${chatNote}
 - Ingressのリアルなプレイヤーが日常的に使う専門用語、俗称、ネットスラング（例：焼く、更地、デプロイ、リチャージ、スキャナ、ノヴァ、多重、多層、沈める、自撮り、アプグレ、白ポ、カプセル、ファーム、バースターなど）をふんだんに取り入れること。
 - 移動手段やプレイスタイルにまつわる「エージェントあるある」の日常ユーモア（例：車載AG、チャリチャリ、徒歩インステップ、深夜徘徊、不審者扱い、警察の職務質問（職質）、地方のポータル維持、メダル実績、アノマリー遠征など）を交えること。
 - ログに登場するポータル名・地名・プレイヤー名（AG名）を積極的に拾ってリアクションしてください（「〇〇（ポータル名）が焼かれたか！」「〇〇さん（AG名）またあそこ回ってるな」など）。
-- 下記の例示の言葉をそのままコメントに使用しないこと。あくまで世界観・語彙の参考として読むこと。
+- 下記の例示の言葉をそのままコメントに使用しないこと。あくまで世界観・語彙 of 参考として読むこと。
 
 以下の5種類のキャラクターがランダムに混在するコメントを ${commentCount}個 生成してください:
 
@@ -694,7 +694,7 @@ ${chatNote}
 1. 【一般エージェント（一般視聴者）】（全体の70%以上・white）
    - ログに対する自然な反応や感想を短く、ネットスラングやエージェントの生々しい声を交えて表現。
    - 「〇〇（ポータル名）が更地になってる」「青（RES）/緑（ENL）リンク綺麗に通ったな」「あそ公（あそこのポータル）また焼かれたんか」「防衛（リチャージ）間に合わんかったか」「あそこは車から届かんし徒歩だな」「深夜のチャリチャリお疲れ様です」「また職質されかけてて草」「〇〇さんのスキャナどうなってんのｗ」など。
-   - 5%程度の確率で、IngressのSF的バックストーリー（「シェイパー（Shapers）の精神支配」「N'zeer（ナジール）の影響」「XM濃度がヤバい」「ポータルの特異点」「XMの啓示を受けた」など）を交えた、根拠のない陰謀論や深読みコメントを混ぜる。
+   - 5%程度の確率で、特定のエージェントが裏で何かを企んでいるのではないかという、プレイヤー同士の行動に対する根拠のない深読み、邪推、陰謀論コメント（例：「〇〇さんが深夜に急にデプロイしたのはアノマリーの仕込みの陽動作戦か？」「最近〇〇エリアのポータルが更地になったのは裏で陣営間の取引があったのでは」「〇〇さん、二重スパイを企んでいるんじゃないか…？」など）を混ぜる。
 
 2. 【Ingressガチ勢・戦術家】（全体の20%以下・white）
    - 感情を挟まず、極めて冷静に戦況やエリア状況、使用アイテム等を短く分析する。
@@ -726,7 +726,7 @@ ${logLines}`;
 
         hasChatLog = false;
 
-        // セクターコールのロードと Fisher-Yates 動的シャッフル
+        // 有効なAPIコールのランダムシャッフル（Fisher-Yates）
         const callers = [];
         if (openaiKey) callers.push((retry) => callOpenAI(prompt, commentCount, retry));
         if (claudeKey) callers.push((retry) => callClaude(prompt, commentCount, retry));
@@ -739,7 +739,7 @@ ${logLines}`;
             [callers[i], callers[j]] = [callers[j], callers[i]];
         }
 
-        // 先頭セクターから接続をシーク（フォールバック制御）
+        // 先頭のAPIから順にフォールバック制御しながら順次呼び出し
         let idx = 0;
         function tryNext() {
             if (idx >= callers.length) {
@@ -752,16 +752,16 @@ ${logLines}`;
     }
 
     // =============================================
-    // ポータルネットワーク（XMネットワーク）リアルタイム監視
+    // マップデータおよびCOMMのリアルタイム監視処理
     // =============================================
 
     let lastPortalData = new Map(); // guid -> {team, health}
-    let lastCommsMessages = new Set(); // 既読メッセージGUIDハッシュ
-    let commLogBuffer = [];           // スキャナーHUD内にスタックするCOMM履歴
+    let lastCommsMessages = new Set(); // 重複表示防止用の既読メッセージGUIDのキャッシュ
+    let commLogBuffer = [];           // AIコメントの文脈生成用に蓄積するCOMMログ履歴
     const COMM_LOG_MAX = 50;
 
     /**
-     * グローバルのスキャナーコンテキストからIngressのAPIマトリクスを探査
+     * 実行環境（IITCまたは純正Intel Map）の判定
      */
     function getIngressAPI() {
         if (window.IITC && window.portals) return { type: 'IITC' };
@@ -785,7 +785,7 @@ ${logLines}`;
 
             const prev = lastPortalData.get(guid);
             if (prev) {
-                // 派閥変更（ポータルのキャプチャまたは中和）の探知
+                // 陣営の変更（中和、キャプチャ）を検知
                 if (prev.team !== team) {
                     let msg;
                     if (team === 'N') {
@@ -799,7 +799,7 @@ ${logLines}`;
                     }
                     queueAiEvent(msg);
                 }
-                // XM耐久値の急激な低下（攻撃探知）
+                // ポータルHPの急激な減少（攻撃検知）
                 if (prev.health - health >= 20 && team !== 'N') {
                     const msg = `⚠️ ポータル攻撃検知！: ${title} (XM容量: ${prev.health}% → ${health}%)`;
                     queueAiEvent(msg);
@@ -810,7 +810,7 @@ ${logLines}`;
     }
 
     /**
-     * IITCのススキャナー生信号（COMM ALL）をパース処理
+     * IITCのチャットログ（COMM ALL）を監視してパース・イベント化する処理
      */
     function watchIITCComms(forceMode = false) {
         const isForceMode = forceMode === true;
@@ -878,7 +878,7 @@ ${logLines}`;
             const label = isChat ? '[チャット]' : '[システム]';
             const logLine = `${label} ${text}`;
 
-            // ノイズシグナルのフィルタリング
+            // システムメッセージから不要な重複ログを除外
             if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon')) {
                 addDebugLog(`システムノイズを無視: ${text.slice(0, 30)}...`, '#555555');
                 continue;
@@ -906,7 +906,7 @@ ${logLines}`;
     }
 
     /**
-     * スキャナーの物理レイヤ通信(/r/getPlexts)をキャプチャする
+     * Intel Mapのネットワーク通信(/r/getPlexts)をフックする
      */
     function injectNetworkHook() {
         const script = document.createElement('script');
@@ -965,11 +965,11 @@ ${logLines}`;
     }
 
     /**
-     * キャプチャされた物理Plextsデータを変換・パースする
+     * ネットワークフック経由でパケットデータをパースする
      */
     function processPlextsData(results, isFaction = false) {
         if (!Array.isArray(results)) return;
-        if (isFaction) return; // 陣営内部機密チャット（Faction）は絶対にキャプチャしない
+        if (isFaction) return; // Factionチャット（陣営内部発言）はプライバシー保護のためキャプチャ対象外
 
         const sorted = [...results].sort((a, b) => a[1] - b[1]);
 
@@ -1043,7 +1043,7 @@ ${logLines}`;
     }
 
     /**
-     * 純正スキャナー生信号（COMM ALL）のパース処理
+     * ネイティブチャット要素のパース処理
      */
     function processNativeCommsNode(node) {
         const text = node.textContent || '';
@@ -1054,7 +1054,7 @@ ${logLines}`;
     }
 
     // =============================================
-    // IITCコアフックのキャプチャと共鳴登録
+    // IITCフック監視イベント登録処理
     // =============================================
 
     /**
@@ -1132,11 +1132,11 @@ ${logLines}`;
     }
 
     // =============================================
-    // スキャナーHUD調整パネル（設定UI）のデプロイ
+    // コントロールパネル（設定UI）描画処理
     // =============================================
 
     /**
-     * スキャナーHUD右上に調整パネルを展開する
+     * 設定用コントロールパネルを画面右上に構築・表示する
      */
     function createControlPanel() {
         const panel = document.createElement('div');
@@ -1231,9 +1231,9 @@ ${logLines}`;
 
         document.body.appendChild(panel);
 
-        // --- コントロールイベント共鳴 ---
+        // --- コントロールイベント処理 ---
 
-        // パネルの物理移動（ドラッグトラッキング）
+        // パネルのドラッグ移動制御
         const dragHandle = document.getElementById('nico-drag-handle');
         let isDragging = false;
         let dragOffsetX = 0;
@@ -1259,7 +1259,7 @@ ${logLines}`;
             isDragging = false;
         });
 
-        // パネルタブ切り替え信号
+        // パネルタブ切り替えハンドラ
         function switchTab(tab) {
             const isMain = tab === 'main';
             document.getElementById('nico-tab-main').style.display = isMain ? '' : 'none';
@@ -1272,7 +1272,7 @@ ${logLines}`;
         document.getElementById('nico-tab-btn-main').addEventListener('click', () => switchTab('main'));
         document.getElementById('nico-tab-btn-api').addEventListener('click', () => switchTab('api'));
 
-        // コメント出力制限パラメータ同期
+        // コメント数入力同期ハンドラ
         const commentCountInput = document.getElementById('nico-comment-count');
         commentCountInput.addEventListener('change', () => {
             const val = Math.max(1, Math.min(100, parseInt(commentCountInput.value, 10) || 7));
@@ -1287,14 +1287,14 @@ ${logLines}`;
             if (!speechCb.checked) cancelAllSpeech();
         });
 
-        // システムデバッグコンソール表示切り替え
+        // システムデバッグログ表示切り替え
         const debugCb = document.getElementById('nico-debug-enabled');
         const debugLog = document.getElementById('nico-debug-log');
         debugCb.addEventListener('change', () => {
             debugLog.style.display = debugCb.checked ? 'block' : 'none';
         });
 
-        // スキャナーHUD有効化チェックボックス同期
+        // プラグイン有効化切り替え
         const enabledCb = document.getElementById('nico-enabled');
         enabledCb.addEventListener('change', () => {
             const active = enabledCb.checked;
@@ -1307,7 +1307,7 @@ ${logLines}`;
             }
         });
 
-        // OpenAI APIキー自動保存と実地検証波
+        // OpenAI APIキー自動保存と実地検証
         const apiKeyInput = document.getElementById('nico-openai-key');
         const apiKeyStatus = document.getElementById('nico-apikey-status');
 
@@ -1374,7 +1374,7 @@ ${logLines}`;
             validateApiKey(key);
         });
 
-        // Claude APIキー自動保存と実地検証波
+        // Claude APIキー自動保存と検証
         const claudeKeyInput = document.getElementById('nico-claude-key');
         const claudeStatus = document.getElementById('nico-claude-status');
 
@@ -1418,7 +1418,7 @@ ${logLines}`;
             validateClaudeKey(key);
         });
 
-        // Gemini APIキー自動保存と実地検証波
+        // Gemini APIキー自動保存と検証
         const geminiKeyInput = document.getElementById('nico-gemini-key');
         const geminiStatus = document.getElementById('nico-gemini-status');
 
@@ -1488,7 +1488,7 @@ ${logLines}`;
             updateActiveApiSummary();
         }
 
-        // 折りたたみトグル
+        // 折りたたみトグル制御ハンドラ
         const nicoBody = document.getElementById('nico-body');
         const toggleBtn = document.getElementById('nico-toggle');
         let panelCollapsed = true;
@@ -1509,7 +1509,7 @@ ${logLines}`;
     }
 
     // =============================================
-    // 外部ホログラムフォントアライメントのロード
+    // ホログラム表示用外部フォントの読み込み
     // =============================================
 
     function loadFont() {
@@ -1522,7 +1522,7 @@ ${logLines}`;
     }
 
     // =============================================
-    // スキャナーHUDシステムコンソール
+    // デバッグログ出力関数
     // =============================================
 
     function log(...args) {
@@ -1532,7 +1532,7 @@ ${logLines}`;
     }
 
     // =============================================
-    // スキャナーHUDブートシーケンス
+    // プラグイン初期化シーケンス
     // =============================================
 
     function main() {
@@ -1542,7 +1542,7 @@ ${logLines}`;
         initOverlay();
         createControlPanel();
 
-        // 物理ネットワークのインターセプトを開始
+        // ネットワークフックをロード
         injectNetworkHook();
 
         const checkReady = setInterval(() => {
@@ -1552,7 +1552,7 @@ ${logLines}`;
 
                 registerIITCHooks();
 
-                // 各種ネットワークフックとの同調
+                // イベントハンドラ登録
                 window.addHook('mapDataRefreshEnd', watchIITCComms);
                 window.addHook('publicChatDataAvailable', watchIITCComms);
                 window.addHook('factionChatDataAvailable', watchIITCComms);
