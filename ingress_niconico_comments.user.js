@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.2.0
+// @version      1.2.1
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -1493,14 +1493,20 @@ ${logLines}`;
         const toggleBtn = document.getElementById('nico-toggle');
         let panelCollapsed = true;
         panel.style.minWidth = 'auto';
-        toggleBtn.addEventListener('mousedown', (e) => e.stopPropagation());
-        toggleBtn.addEventListener('click', () => {
+
+        function togglePanel() {
             panelCollapsed = !panelCollapsed;
             nicoBody.style.display = panelCollapsed ? 'none' : '';
             toggleBtn.textContent = panelCollapsed ? '▲' : '▼';
             toggleBtn.title = panelCollapsed ? '開く' : '折りたたむ';
             panel.style.minWidth = panelCollapsed ? 'auto' : '220px';
-        });
+        }
+
+        toggleBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+        toggleBtn.addEventListener('click', togglePanel);
+
+        // タイトルバー（ドラッグハンドル）のダブルクリックで開閉
+        dragHandle.addEventListener('dblclick', togglePanel);
 
         // 起動時に保存済みのAPIキーを一括自動検証
         validateAllApiKeys();
