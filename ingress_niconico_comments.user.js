@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.2.1
+// @version      1.3.0
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -191,8 +191,8 @@
     function showComment(text, color = FACTION_COLORS.SYSTEM, size = CONFIG.fontSize) {
         if (!commentContainer) return;
 
-        const screenWidth = window.innerWidth;
-        const screenHeight = window.innerHeight;
+        const screenWidth = commentContainer.offsetWidth || window.innerWidth;
+        const screenHeight = commentContainer.offsetHeight || window.innerHeight;
 
         // 割り当てるレーンと座標の決定
         const laneIndex = getAvailableLane();
@@ -251,8 +251,8 @@
         const textWidth = el.scrollWidth;
         const totalDist = screenWidth + textWidth;
 
-        // スクロールアニメーション時間は10秒固定
-        const duration = 10000;
+        // CONFIG.scrollSpeed (px/秒) からアニメーション時間を算出
+        const duration = Math.round((totalDist / CONFIG.scrollSpeed) * 1000);
 
         // スクロール用のアニメーション定義（@keyframes）を動的に生成
         const keyframesName = `nicoScroll_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -300,8 +300,8 @@
         // 投影終了（アニメーションエンド）時のノードクリア
         el.addEventListener('animationend', removeEl);
 
-        // DOMリークセーフティネット（12秒経過後に強制消滅）
-        setTimeout(removeEl, 12000);
+        // DOMリークセーフティネット（アニメーション終了予定時刻 + 2秒で強制消滅）
+        setTimeout(removeEl, duration + 2000);
 
         addDebugLog(`投影: ${text}`, color);
         log(`XMコメント投影: [${text}] lane=${laneIndex} dur=${Math.round(duration)}ms`);
@@ -321,10 +321,11 @@
      */
     function queueAiEvent(rawText, isChat = false) {
         addDebugLog(`イベント検知: ${rawText.slice(0, 30)}...`, '#888888');
-        if (isChat) hasChatLog = true;
 
         // プラグインが無効化されている場合は処理しない
         if (!document.getElementById('nico-enabled')?.checked) return;
+
+        if (isChat) hasChatLog = true;
 
         // APIキーが設定されているか確認
         const openaiKey = GM_getValue('NICO_OPENAI_API_KEY', '').trim();
@@ -761,52 +762,38 @@ ${logLines}`;
     const COMM_LOG_MAX = 50;
 
     /**
-     * 実行環境（IITCまたは純正Intel Map）の判定
+     * 同一タイムスタンプでグループ化されたログ行をまとめてキューに流す共通処理
      */
-    function getIngressAPI() {
-        if (window.IITC && window.portals) return { type: 'IITC' };
-        if (window.Ingress && window.Ingress.Map) return { type: 'Ingress' };
-        return null;
+    function flushLogGroup(groupedLogs, isChatGroup) {
+        if (groupedLogs.length === 0) return;
+        const mergedLine = groupedLogs.length === 1
+            ? groupedLogs[0]
+            : `(同時刻${groupedLogs.length}連ログ) ` + groupedLogs.join(' / ');
+        commLogBuffer.push(mergedLine);
+        if (commLogBuffer.length > COMM_LOG_MAX) commLogBuffer.shift();
+        queueAiEvent(mergedLine, isChatGroup);
     }
 
     /**
-     * IITCポータル情報からXMの微小変化を検出する
+     * plextのmarkupテキストを組み立てて返す共通処理
+     * @returns {{ text: string, isChat: boolean } | null}
      */
-    function watchIITCPortals() {
-        if (!window.portals) return;
+    function parsePlextEntry(entry) {
+        const plextObj = entry[2] && entry[2].plext;
+        if (!plextObj) return null;
 
-        for (const [guid, portal] of Object.entries(window.portals)) {
-            const data = portal.options && portal.options.data;
-            if (!data) continue;
-
-            const team = data.team || 'N';
-            const title = data.title || 'Unknown Portal';
-            const health = data.health || 0;
-
-            const prev = lastPortalData.get(guid);
-            if (prev) {
-                // 陣営の変更（中和、キャプチャ）を検知
-                if (prev.team !== team) {
-                    let msg;
-                    if (team === 'N') {
-                        msg = `💥 ポータル中和！: ${title}`;
-                    } else if (team === 'R') {
-                        msg = `🔵 ポータルキャプチャ (RES)！: ${title}`;
-                    } else if (team === 'E') {
-                        msg = `🟢 ポータルキャプチャ (ENL)！: ${title}`;
-                    } else {
-                        msg = `❓ ${title} 所属陣営変更`;
-                    }
-                    queueAiEvent(msg);
-                }
-                // ポータルHPの急激な減少（攻撃検知）
-                if (prev.health - health >= 20 && team !== 'N') {
-                    const msg = `⚠️ ポータル攻撃検知！: ${title} (XM容量: ${prev.health}% → ${health}%)`;
-                    queueAiEvent(msg);
-                }
+        const markup = plextObj.markup || [];
+        const plextType = plextObj.plextType || '';
+        let text = '';
+        for (const part of markup) {
+            if (part[0] === 'TEXT' || part[0] === 'PLAYER' || part[0] === 'PORTAL') {
+                text += (part[1] && (part[1].plain || part[1].name)) || '';
             }
-            lastPortalData.set(guid, { team, health });
         }
+        if (!text) return null;
+
+        const isChat = plextType === 'PLAYER_GENERATED';
+        return { text, isChat };
     }
 
     /**
@@ -841,42 +828,15 @@ ${logLines}`;
         let groupedLogs = [];
         let isChatGroup = false;
 
-        const flushGroup = () => {
-            if (groupedLogs.length === 0) return;
-            let mergedLine = '';
-            if (groupedLogs.length === 1) {
-                mergedLine = groupedLogs[0];
-            } else {
-                mergedLine = `(同時刻${groupedLogs.length}連ログ) ` + groupedLogs.join(' / ');
-            }
-            commLogBuffer.push(mergedLine);
-            if (commLogBuffer.length > COMM_LOG_MAX) commLogBuffer.shift();
-            queueAiEvent(mergedLine, isChatGroup);
-            groupedLogs = [];
-            isChatGroup = false;
-        };
-
         for (const [guid, entry] of entries) {
             if (lastCommsMessages.has(guid)) continue;
             lastCommsMessages.add(guid);
 
             const timestamp = entry[1];
-            const plext = entry[2] && entry[2].plext;
-            if (!plext) continue;
+            const parsed = parsePlextEntry(entry);
+            if (!parsed) continue;
 
-            const markup = plext.markup || [];
-            const plextType = plext.plextType || '';
-            let text = '';
-            for (const part of markup) {
-                if (part[0] === 'TEXT' || part[0] === 'PLAYER' || part[0] === 'PORTAL') {
-                    text += (part[1] && (part[1].plain || part[1].name)) || '';
-                }
-            }
-            if (!text) continue;
-
-            const isChat = plextType === 'PLAYER_GENERATED';
-            const label = isChat ? '[チャット]' : '[システム]';
-            const logLine = `${label} ${text}`;
+            const { text, isChat } = parsed;
 
             // システムメッセージから不要な重複ログを除外
             if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon')) {
@@ -885,15 +845,18 @@ ${logLines}`;
             }
 
             if (currentTimestamp !== -1 && currentTimestamp !== timestamp) {
-                flushGroup();
+                flushLogGroup(groupedLogs, isChatGroup);
+                groupedLogs = [];
+                isChatGroup = false;
             }
-            
+
+            const label = isChat ? '[チャット]' : '[システム]';
             currentTimestamp = timestamp;
-            groupedLogs.push(logLine);
+            groupedLogs.push(`${label} ${text}`);
             if (isChat) isChatGroup = true;
             hasNew = true;
         }
-        flushGroup();
+        flushLogGroup(groupedLogs, isChatGroup);
 
         if (hasNew) {
             addDebugLog(`COMM ALLパケット受信 (バッファ ${commLogBuffer.length}件)`, '#66aaff');
@@ -978,43 +941,16 @@ ${logLines}`;
         let groupedLogs = [];
         let isChatGroup = false;
 
-        const flushGroup = () => {
-            if (groupedLogs.length === 0) return;
-            let mergedLine = '';
-            if (groupedLogs.length === 1) {
-                mergedLine = groupedLogs[0];
-            } else {
-                mergedLine = `(同時刻${groupedLogs.length}連ログ) ` + groupedLogs.join(' / ');
-            }
-            commLogBuffer.push(mergedLine);
-            if (commLogBuffer.length > COMM_LOG_MAX) commLogBuffer.shift();
-            queueAiEvent(mergedLine, isChatGroup);
-            groupedLogs = [];
-            isChatGroup = false;
-        };
-
         for (const entry of sorted) {
             const guid = entry[0];
             const timestamp = entry[1];
             if (lastCommsMessages.has(guid)) continue;
             lastCommsMessages.add(guid);
 
-            const plextObj = entry[2] && entry[2].plext;
-            if (!plextObj) continue;
+            const parsed = parsePlextEntry(entry);
+            if (!parsed) continue;
 
-            const markup = plextObj.markup || [];
-            const plextType = plextObj.plextType || '';
-            let text = '';
-            for (const part of markup) {
-                if (part[0] === 'TEXT' || part[0] === 'PLAYER' || part[0] === 'PORTAL') {
-                    text += (part[1] && (part[1].plain || part[1].name)) || '';
-                }
-            }
-            if (!text) continue;
-
-            const isChat = plextType === 'PLAYER_GENERATED';
-            const label = isChat ? '[チャット]' : '[システム]';
-            const logLine = `${label} ${text}`;
+            const { text, isChat } = parsed;
 
             if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon')) {
                 addDebugLog(`ノイズ排除: ${text.slice(0, 30)}...`, '#555555');
@@ -1022,15 +958,18 @@ ${logLines}`;
             }
 
             if (currentTimestamp !== -1 && currentTimestamp !== timestamp) {
-                flushGroup();
+                flushLogGroup(groupedLogs, isChatGroup);
+                groupedLogs = [];
+                isChatGroup = false;
             }
-            
+
+            const label = isChat ? '[チャット]' : '[システム]';
             currentTimestamp = timestamp;
-            groupedLogs.push(logLine);
+            groupedLogs.push(`${label} ${text}`);
             if (isChat) isChatGroup = true;
             hasNew = true;
         }
-        flushGroup();
+        flushLogGroup(groupedLogs, isChatGroup);
 
         if (hasNew) {
             addDebugLog(`ネットワークセグメントからCOMM ALL同期 (バッファ ${commLogBuffer.length}件)`, '#66aaff');
@@ -1040,17 +979,6 @@ ${logLines}`;
             const arr = [...lastCommsMessages];
             lastCommsMessages = new Set(arr.slice(-300));
         }
-    }
-
-    /**
-     * ネイティブチャット要素のパース処理
-     */
-    function processNativeCommsNode(node) {
-        const text = node.textContent || '';
-        if (!text.trim()) return;
-
-        const msg = text.trim().slice(0, 100);
-        queueAiEvent(`[チャット] ${msg}`);
     }
 
     // =============================================
