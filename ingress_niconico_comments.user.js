@@ -540,13 +540,9 @@
                 temperature: 0.9
             }),
             onload: (response) => {
-                if (response.status === 429 || response.status >= 500) {
+                if (response.status !== 200) {
                     addDebugLog(`[OpenAI] パルス減衰(${response.status})。別セクターをサーチします...`, '#ffaa44');
                     if (onRetry) onRetry();
-                    return;
-                }
-                if (response.status !== 200) {
-                    addDebugLog(`[OpenAI] 接続エラー: ${response.status}`, '#ff4444');
                     return;
                 }
                 try {
@@ -586,13 +582,9 @@
                 ]
             }),
             onload: (response) => {
-                if (response.status === 429 || response.status >= 500) {
+                if (response.status !== 200) {
                     addDebugLog(`[Claude] パルス減衰(${response.status})。別セクターをサーチします...`, '#ffaa44');
                     if (onRetry) onRetry();
-                    return;
-                }
-                if (response.status !== 200) {
-                    addDebugLog(`[Claude] 接続エラー: ${response.status}`, '#ff4444');
                     return;
                 }
                 try {
@@ -617,7 +609,7 @@
         const systemInstruction = 'You must output valid JSON only. Format: { "comments": [{"text": "...", "color": "white|blue|green|red"}] }';
         GM_xmlhttpRequest({
             method: 'POST',
-            url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+            url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
             headers: { 'Content-Type': 'application/json' },
             data: JSON.stringify({
                 system_instruction: { parts: [{ text: systemInstruction }] },
@@ -629,13 +621,9 @@
                 }
             }),
             onload: (response) => {
-                if (response.status === 429 || response.status >= 500) {
+                if (response.status !== 200) {
                     addDebugLog(`[Gemini] パルス減衰(${response.status})。別セクターをサーチします...`, '#ffaa44');
                     if (onRetry) onRetry();
-                    return;
-                }
-                if (response.status !== 200) {
-                    addDebugLog(`[Gemini] 接続エラー: ${response.status}`, '#ff4444');
                     return;
                 }
                 try {

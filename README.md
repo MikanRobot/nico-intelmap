@@ -32,7 +32,7 @@ Ingress Intel Map（[intel.ingress.com](https://intel.ingress.com)）を開い�
 |---|---|---|
 | **OpenAI** | `gpt-4o-mini` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | **Claude** | `claude-haiku-4-5` | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
-| **Gemini** | `gemini-2.0-flash` | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
+| **Gemini** | `gemini-2.5-flash` | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
 
 > 💡 **Geminiは無料枠あり**  
 > Google AI StudioのGemini APIは無料枠での利用が可能です。まずはGeminiから試すのがお勧めです。
