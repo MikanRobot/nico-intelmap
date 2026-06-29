@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.3.0
+// @version      1.4.1
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -92,7 +92,7 @@
 
         // 表示領域をインテルマップのサイズに合わせる
         fitToMap();
-        log('HUD投影レイヤーをデプロイしました');
+        log('オーバーレイを初期化しました');
     }
 
     /**
@@ -303,8 +303,8 @@
         // DOMリークセーフティネット（アニメーション終了予定時刻 + 2秒で強制消滅）
         setTimeout(removeEl, duration + 2000);
 
-        addDebugLog(`投影: ${text}`, color);
-        log(`XMコメント投影: [${text}] lane=${laneIndex} dur=${Math.round(duration)}ms`);
+        addDebugLog(`コメント表示: ${text}`, color);
+        log(`コメント表示: [${text}] lane=${laneIndex} dur=${Math.round(duration)}ms`);
     }
 
     // =============================================
@@ -332,7 +332,7 @@
         const claudeKey = GM_getValue('NICO_CLAUDE_API_KEY', '').trim();
         const geminiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
         if (!openaiKey && !claudeKey && !geminiKey) {
-            addDebugLog('外部コグニティブリンク未確立（API Keyを設定してください）', '#ff4444');
+            addDebugLog('APIキーが設定されていません', '#ff4444');
             return;
         }
 
@@ -354,7 +354,7 @@
         const timeSinceLastCall = now - lastAiCall;
         const timeToWait = Math.max(0, AI_CONFIG.cooldown - timeSinceLastCall);
 
-        addDebugLog(`[待機] AI共鳴波をスケジュール（${Math.round(timeToWait / 1000)}秒後）...`, '#666666');
+        addDebugLog(`[待機] AIリクエストをスケジュール（${Math.round(timeToWait / 1000)}秒後）...`, '#666666');
 
         aiTimeout = setTimeout(() => {
             triggerAiComment();
@@ -373,7 +373,7 @@
         const uttr = new SpeechSynthesisUtterance('');
         uttr.volume = 0;
         speechSynthesis.speak(uttr);
-        addDebugLog('🔊 音声合成モジュールの同調に成功しました', '#aaffaa');
+        addDebugLog('🔊 音声合成の初期化に成功しました', '#aaffaa');
     };
     ['click', 'mousedown', 'keydown', 'touchstart'].forEach(e => {
         document.addEventListener(e, unlockAudio, { once: true });
@@ -425,11 +425,27 @@
     }
 
     /**
+     * 直近で応答したAPIの「▶ 使用中」バッジをUI上に表示する
+     */
+    function markLastUsedApi(apiName) {
+        const badgeMap = {
+            'OpenAI': 'nico-openai-badge',
+            'Claude': 'nico-claude-badge',
+            'Gemini': 'nico-gemini-badge',
+        };
+        for (const [name, id] of Object.entries(badgeMap)) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = (name === apiName) ? '' : 'none';
+        }
+    }
+
+    /**
      * APIから返却されたAIコメントを整形・表示・読み上げする処理
      * @param {string} content - APIのJSONレスポンス
      * @param {string} apiName - 使用したAPIモデルの名称
      */
     function handleAiComments(content, apiName) {
+        markLastUsedApi(apiName);
         const cleaned = content
             .replace(/^```(?:json)?\s*/i, '')
             .replace(/\s*```$/, '')
@@ -437,7 +453,10 @@
 
         let comments = [];
         try {
-            const parsed = JSON.parse(cleaned);
+            // ```json ``` ラッパーを除去したあと、最初の { から最後の } までを抽出して解析
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('JSONブロックが見つかりません');
+            const parsed = JSON.parse(jsonMatch[0]);
             const raw = parsed.comments || parsed;
             if (Array.isArray(raw)) {
                 comments = raw.map(c => {
@@ -445,15 +464,15 @@
                     return { text: c.text || '', color: c.color || 'white' };
                 }).filter(c => c.text);
             } else {
-                throw new Error('パースシグナルの異常');
+                throw new Error('commentsが配列ではありません');
             }
         } catch (e) {
-            log(`[${apiName}] JSONデコード異常:`, e, cleaned.slice(0, 100));
-            addDebugLog(`[${apiName}] コグニティブデータの復号に失敗`, '#ff4444');
+            log(`[${apiName}] JSON解析エラー:`, e, cleaned.slice(0, 100));
+            addDebugLog(`[${apiName}] JSON解析に失敗しました: ${e.message}`, '#ff4444');
             return;
         }
 
-        addDebugLog(`[${apiName}] 外部共鳴(${comments.length}件): ${comments.map(c => `[${c.color}]${c.text}`).join(', ')}`, '#aaffaa');
+        addDebugLog(`[${apiName}] AIコメント受信(${comments.length}件): ${comments.map(c => `[${c.color}]${c.text}`).join(', ')}`, '#aaffaa');
 
         const isSpeechEnabled = GM_getValue('NICO_SPEECH_ENABLED', false);
         let maxDelay = 0;
@@ -487,7 +506,7 @@
 
                 if (isSpeechEnabled) {
                     if (!isAudioUnlocked) {
-                        if (index === 0) addDebugLog('⚠️ オーディオチャネルのトリガー（画面のタップ）が必要です', '#ffcc88');
+                        if (index === 0) addDebugLog('⚠️ 音声を有効化するには画面をクリックしてください', '#ffcc88');
                         return;
                     }
 
@@ -541,7 +560,7 @@
             }),
             onload: (response) => {
                 if (response.status !== 200) {
-                    addDebugLog(`[OpenAI] パルス減衰(${response.status})。別セクターをサーチします...`, '#ffaa44');
+                    addDebugLog(`[OpenAI] エラー(${response.status})。次のAPIにフォールバックします...`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
@@ -554,7 +573,7 @@
                     log('OpenAI Response Parse Error:', e);
                 }
             },
-            onerror: () => addDebugLog('[OpenAI] 通信障害', '#ff4444')
+            onerror: () => addDebugLog('[OpenAI] 通信エラー', '#ff4444')
         });
     }
 
@@ -583,7 +602,7 @@
             }),
             onload: (response) => {
                 if (response.status !== 200) {
-                    addDebugLog(`[Claude] パルス減衰(${response.status})。別セクターをサーチします...`, '#ffaa44');
+                    addDebugLog(`[Claude] エラー(${response.status})。次のAPIにフォールバックします...`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
@@ -596,7 +615,7 @@
                     log('Claude Response Parse Error:', e);
                 }
             },
-            onerror: () => addDebugLog('[Claude] 通信障害', '#ff4444')
+            onerror: () => addDebugLog('[Claude] 通信エラー', '#ff4444')
         });
     }
 
@@ -617,24 +636,26 @@
                 generationConfig: {
                     temperature: 0.9,
                     maxOutputTokens: Math.max(400, commentCount * 60 + 200),
-                    responseMimeType: 'application/json'
+                    responseMimeType: 'application/json',
+                    thinkingConfig: { thinkingBudget: 0 }
                 }
             }),
             onload: (response) => {
                 if (response.status !== 200) {
-                    addDebugLog(`[Gemini] パルス減衰(${response.status})。別セクターをサーチします...`, '#ffaa44');
+                    addDebugLog(`[Gemini] エラー(${response.status})。次のAPIにフォールバックします...`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
                 try {
                     const res = JSON.parse(response.responseText);
-                    const text = res?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+                    const parts = res?.candidates?.[0]?.content?.parts || [];
+                    const text = parts.find(p => p.text && !p.thought)?.text?.trim();
                     if (text) handleAiComments(text, 'Gemini');
                 } catch (e) {
                     log('Gemini Response Parse Error:', e);
                 }
             },
-            onerror: () => addDebugLog('[Gemini] 通信障害', '#ff4444')
+            onerror: () => addDebugLog('[Gemini] 通信エラー', '#ff4444')
         });
     }
 
@@ -644,13 +665,13 @@
     function triggerAiComment(isForce = false) {
         if (eventQueue.length === 0 && !isForce) return;
 
-        addDebugLog(`--- AIコグニティブ同調シーケンス開始 (手動: ${isForce}) ---`, '#cccccc');
+        addDebugLog(`--- AI呼び出し開始 (手動: ${isForce}) ---`, '#cccccc');
 
         const openaiKey = GM_getValue('NICO_OPENAI_API_KEY', '').trim();
         const claudeKey = GM_getValue('NICO_CLAUDE_API_KEY', '').trim();
         const geminiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
         if (!openaiKey && !claudeKey && !geminiKey) {
-            addDebugLog('エラー: コグニティブグリッドキーが一切ロードされていません', '#ff4444');
+            addDebugLog('エラー: 有効なAPIキーがありません', '#ff4444');
             return;
         }
 
@@ -715,24 +736,26 @@ ${logLines}`;
 
         hasChatLog = false;
 
-        // 有効なAPIコールのランダムシャッフル（Fisher-Yates）
+        // 有効かつ使用チェック済みのAPIを固定順（OpenAI→Claude→Gemini）で積む
+        const openaiOn = document.getElementById('nico-openai-enabled')?.checked ?? true;
+        const claudeOn = document.getElementById('nico-claude-enabled')?.checked ?? true;
+        const geminiOn = document.getElementById('nico-gemini-enabled')?.checked ?? true;
+
         const callers = [];
-        if (openaiKey) callers.push((retry) => callOpenAI(prompt, commentCount, retry));
-        if (claudeKey) callers.push((retry) => callClaude(prompt, commentCount, retry));
-        if (geminiKey) callers.push((retry) => callGemini(prompt, commentCount, retry));
+        if (openaiKey && openaiOn) callers.push((retry) => callOpenAI(prompt, commentCount, retry));
+        if (claudeKey && claudeOn) callers.push((retry) => callClaude(prompt, commentCount, retry));
+        if (geminiKey && geminiOn) callers.push((retry) => callGemini(prompt, commentCount, retry));
 
-        if (callers.length === 0) return;
-
-        for (let i = callers.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [callers[i], callers[j]] = [callers[j], callers[i]];
+        if (callers.length === 0) {
+            addDebugLog('エラー: 使用するAPIが選択されていません', '#ff4444');
+            return;
         }
 
         // 先頭のAPIから順にフォールバック制御しながら順次呼び出し
         let idx = 0;
         function tryNext() {
             if (idx >= callers.length) {
-                addDebugLog('すべてのコグニティブグリッドが応答しません。バイパスします', '#ff4444');
+                addDebugLog('すべてのAPIが応答しませんでした', '#ff4444');
                 return;
             }
             callers[idx++](tryNext);
@@ -912,7 +935,7 @@ ${logLines}`;
             processPlextsData(e.detail.result, e.detail.isFaction);
         });
 
-        log('物理通信ポートへのフックに成功');
+        log('ネットワークフックを設定しました');
     }
 
     /**
@@ -1032,7 +1055,7 @@ ${logLines}`;
             queueAiEvent('🔗 リンク確立！');
         });
 
-        log('IITCネットワークポートとの結合に成功');
+        log('IITCイベントフックを登録しました');
     }
 
     /**
@@ -1105,8 +1128,9 @@ ${logLines}`;
                     <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid #444;">
                         <label><input type="checkbox" id="nico-speech-enabled" ${GM_getValue('NICO_SPEECH_ENABLED', false) ? 'checked' : ''}> 🔊 音声読み上げ</label>
                     </div>
-                    <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid #444;">
+                    <div style="margin-bottom:4px;padding-top:8px;border-top:1px solid #444;display:flex;align-items:center;justify-content:space-between;">
                         <label><input type="checkbox" id="nico-debug-enabled"> 🛠️ デバッグ表示</label>
+                        <button id="nico-debug-copy" style="display:none;background:#333;border:1px solid #555;color:#aaa;font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;" title="ログをクリップボードにコピーしてAIに貼り付けてデバッグできます">📋 コピー</button>
                     </div>
                     <div id="nico-debug-log" style="display:none;background:#111;color:#ccc;font-size:11px;height:70px;overflow-y:auto;padding:4px;margin-bottom:8px;border:1px solid #444;border-radius:3px;word-break:break-all;"></div>
                     <div style="flex: 1;"></div>
@@ -1114,27 +1138,52 @@ ${logLines}`;
 
                 <!-- API設定タブ -->
                 <div id="nico-tab-api" style="display:none;">
+                    <div style="font-size:10px;color:#888;margin-bottom:8px;">✅ チェックしたAPIを上から順に使用し、失敗時は次へフォールバックします。</div>
                     <div style="margin-bottom:10px;">
-                        <div style="font-size:11px;color:#aaa;margin-bottom:3px;">OpenAI API Key</div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;">
+                                <input type="checkbox" id="nico-openai-enabled" ${GM_getValue('NICO_OPENAI_ENABLED', true) ? 'checked' : ''}>
+                                <span>① OpenAI API Key</span>
+                            </label>
+                        </div>
                         <input type="password" id="nico-openai-key" placeholder="sk-..." value="${savedApiKey}" style="width:100%;padding:4px;box-sizing:border-box;background:#222;color:#fff;border:1px solid #444;border-radius:3px;">
                         <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
-                            <span id="nico-apikey-status" style="font-size:11px;color:#aaa;">${savedApiKey ? '⏳ 未検証' : '❌ 未設定'}</span>
+                            <span style="display:flex;align-items:center;gap:6px;">
+                                <span id="nico-apikey-status" style="font-size:11px;color:#aaa;">${savedApiKey ? '⏳ 未検証' : '❌ 未設定'}</span>
+                                <span id="nico-openai-badge" style="display:none;font-size:10px;color:#ffdd44;background:rgba(255,221,68,0.15);border:1px solid rgba(255,221,68,0.4);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
+                            </span>
                             <a href="https://platform.openai.com/api-keys" target="_blank" style="color:#88aaff;font-size:10px;text-decoration:none;">🔑 取得方法</a>
                         </div>
                     </div>
                     <div style="margin-bottom:10px;">
-                        <div style="font-size:11px;color:#aaa;margin-bottom:3px;">Claude API Key</div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;">
+                                <input type="checkbox" id="nico-claude-enabled" ${GM_getValue('NICO_CLAUDE_ENABLED', true) ? 'checked' : ''}>
+                                <span>② Claude API Key</span>
+                            </label>
+                        </div>
                         <input type="password" id="nico-claude-key" placeholder="sk-ant-..." value="${GM_getValue('NICO_CLAUDE_API_KEY', '')}" style="width:100%;padding:4px;box-sizing:border-box;background:#222;color:#fff;border:1px solid #444;border-radius:3px;">
                         <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
-                            <span id="nico-claude-status" style="font-size:11px;color:#aaa;">${GM_getValue('NICO_CLAUDE_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
+                            <span style="display:flex;align-items:center;gap:6px;">
+                                <span id="nico-claude-status" style="font-size:11px;color:#aaa;">${GM_getValue('NICO_CLAUDE_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
+                                <span id="nico-claude-badge" style="display:none;font-size:10px;color:#ffdd44;background:rgba(255,221,68,0.15);border:1px solid rgba(255,221,68,0.4);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
+                            </span>
                             <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#88aaff;font-size:10px;text-decoration:none;">🔑 取得方法</a>
                         </div>
                     </div>
                     <div style="margin-bottom:6px;">
-                        <div style="font-size:11px;color:#aaa;margin-bottom:3px;">Gemini API Key</div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;">
+                                <input type="checkbox" id="nico-gemini-enabled" ${GM_getValue('NICO_GEMINI_ENABLED', true) ? 'checked' : ''}>
+                                <span>③ Gemini API Key</span>
+                            </label>
+                        </div>
                         <input type="password" id="nico-gemini-key" placeholder="AIza..." value="${GM_getValue('NICO_GEMINI_API_KEY', '')}" style="width:100%;padding:4px;box-sizing:border-box;background:#222;color:#fff;border:1px solid #444;border-radius:3px;">
                         <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
-                            <span id="nico-gemini-status" style="font-size:11px;color:#aaa;">${GM_getValue('NICO_GEMINI_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
+                            <span style="display:flex;align-items:center;gap:6px;">
+                                <span id="nico-gemini-status" style="font-size:11px;color:#aaa;">${GM_getValue('NICO_GEMINI_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
+                                <span id="nico-gemini-badge" style="display:none;font-size:10px;color:#ffdd44;background:rgba(255,221,68,0.15);border:1px solid rgba(255,221,68,0.4);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
+                            </span>
                             <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#88aaff;font-size:10px;text-decoration:none;">🔑 取得方法</a>
                         </div>
                     </div>
@@ -1206,8 +1255,21 @@ ${logLines}`;
         // システムデバッグログ表示切り替え
         const debugCb = document.getElementById('nico-debug-enabled');
         const debugLog = document.getElementById('nico-debug-log');
+        const debugCopyBtn = document.getElementById('nico-debug-copy');
         debugCb.addEventListener('change', () => {
-            debugLog.style.display = debugCb.checked ? 'block' : 'none';
+            const show = debugCb.checked;
+            debugLog.style.display = show ? 'block' : 'none';
+            debugCopyBtn.style.display = show ? '' : 'none';
+        });
+        debugCopyBtn.addEventListener('click', () => {
+            const lines = [...debugLog.children].map(el => el.textContent).join('\n');
+            navigator.clipboard.writeText(lines).then(() => {
+                debugCopyBtn.textContent = '✅ コピー済み';
+                setTimeout(() => { debugCopyBtn.textContent = '📋 コピー'; }, 2000);
+            }).catch(() => {
+                debugCopyBtn.textContent = '❌ 失敗';
+                setTimeout(() => { debugCopyBtn.textContent = '📋 コピー'; }, 2000);
+            });
         });
 
         // プラグイン有効化切り替え
@@ -1374,6 +1436,17 @@ ${logLines}`;
             validateGeminiKey(key);
         });
 
+        // API使用チェックボックスの保存
+        document.getElementById('nico-openai-enabled').addEventListener('change', (e) => {
+            GM_setValue('NICO_OPENAI_ENABLED', e.target.checked);
+        });
+        document.getElementById('nico-claude-enabled').addEventListener('change', (e) => {
+            GM_setValue('NICO_CLAUDE_ENABLED', e.target.checked);
+        });
+        document.getElementById('nico-gemini-enabled').addEventListener('change', (e) => {
+            GM_setValue('NICO_GEMINI_ENABLED', e.target.checked);
+        });
+
         // 保存済みAPIキーの一括検証ヘルパー
         function validateAllApiKeys() {
             const savedApiKey = GM_getValue('NICO_OPENAI_API_KEY', '');
@@ -1427,7 +1500,7 @@ ${logLines}`;
         // 起動時に保存済みのAPIキーを一括自動検証
         validateAllApiKeys();
 
-        log('コントロールパネルをデプロイしました');
+        log('コントロールパネルを表示しました');
     }
 
     // =============================================
@@ -1458,7 +1531,7 @@ ${logLines}`;
     // =============================================
 
     function main() {
-        log('ブートシーケンスを開始します');
+        log('プラグインを起動します');
 
         loadFont();
         initOverlay();
@@ -1470,7 +1543,7 @@ ${logLines}`;
         const checkReady = setInterval(() => {
             if (window.addHook && window.portals !== undefined) {
                 clearInterval(checkReady);
-                log('IITCスキャナー環境を検知');
+                log('IITC環境を検出しました');
 
                 registerIITCHooks();
 
@@ -1481,11 +1554,11 @@ ${logLines}`;
 
             } else if (document.readyState === 'complete') {
                 clearInterval(checkReady);
-                log('純正Intelスキャナー環境を検知');
+                log('純正Intel Map環境を検出しました');
             }
         }, 2000);
 
-        log('スキャナーHUDの同期完了。XM受信待機中...');
+        log('初期化完了。イベント待機中...');
     }
 
     if (document.readyState === 'loading') {

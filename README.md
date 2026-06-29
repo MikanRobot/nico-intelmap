@@ -1,6 +1,6 @@
 <div align="center">
   <img src="https://img.shields.io/badge/Tampermonkey-Plugin-5b8fff.svg" alt="Tampermonkey Plugin">
-  <img src="https://img.shields.io/badge/Version-1.3.0-green.svg" alt="Version 1.3.0">
+  <img src="https://img.shields.io/badge/Version-1.4.1-green.svg" alt="Version 1.4.1">
   <h1>🎌 ニコニコインテルマップ (Nico Intel Map)</h1>
   <p>Ingress Intel Map にニコニコ動画風のAIコメントを流すTampermonkeyプラグイン</p>
 </div>
