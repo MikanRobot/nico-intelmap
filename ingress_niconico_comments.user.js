@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.4.1
+// @version      1.4.4
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -467,9 +467,29 @@
                 throw new Error('commentsが配列ではありません');
             }
         } catch (e) {
-            log(`[${apiName}] JSON解析エラー:`, e, cleaned.slice(0, 100));
-            addDebugLog(`[${apiName}] JSON解析に失敗しました: ${e.message}`, '#ff4444');
-            return;
+            log(`[${apiName}] JSON解析エラー:`, e, cleaned.slice(0, 200));
+            // max_tokens超過などによる途中切断のサルベージ: 完全な {...} ブロックだけ抽出して再試行
+            try {
+                const salvaged = [];
+                // text/color どちらの順序でも対応
+                const objRe = /\{[^{}]*?"text"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*?"color"\s*:\s*"(\w+)"[^{}]*?\}|\{[^{}]*?"color"\s*:\s*"(\w+)"[^{}]*?"text"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*?\}/g;
+                let m;
+                while ((m = objRe.exec(cleaned)) !== null) {
+                    // text→color順 か color→text順かでキャプチャグループが変わる
+                    const text  = m[1] ?? m[4];
+                    const color = m[2] ?? m[3];
+                    if (text) salvaged.push({ text, color: color || 'white' });
+                }
+                if (salvaged.length > 0) {
+                    addDebugLog(`[${apiName}] JSON切断を検出 — ${salvaged.length}件をサルベージしました`, '#ffaa44');
+                    comments = salvaged;
+                } else {
+                    throw new Error('サルベージ対象なし');
+                }
+            } catch {
+                addDebugLog(`[${apiName}] JSON解析に失敗しました: ${e.message}`, '#ff4444');
+                return;
+            }
         }
 
         addDebugLog(`[${apiName}] AIコメント受信(${comments.length}件): ${comments.map(c => `[${c.color}]${c.text}`).join(', ')}`, '#aaffaa');
@@ -494,10 +514,10 @@
             setTimeout(() => {
                 let color;
                 switch (comment.color) {
-                    case 'blue': color = '#44aaff'; break;
-                    case 'green': color = '#44ff88'; break;
-                    case 'red': color = FACTION_COLORS.MACHINA; break;
-                    default: color = '#ffffff'; break;
+                    case 'blue':  color = FACTION_COLORS.RESISTANCE;  break;
+                    case 'green': color = FACTION_COLORS.ENLIGHTENED; break;
+                    case 'red':   color = FACTION_COLORS.MACHINA;     break;
+                    default:      color = '#ffffff';                   break;
                 }
                 let size = CONFIG.fontSize;
                 if (comment.color === 'white' && Math.random() < 0.1) size = CONFIG.fontSize * 1.5; // 10%の確率で文字サイズを1.5倍にする
@@ -555,7 +575,7 @@
                     { role: 'system', content: 'You must output valid JSON only. Format: { "comments": [{"text": "...", "color": "white|blue|green|red"}] }' },
                     { role: 'user', content: prompt }
                 ],
-                max_tokens: Math.max(400, commentCount * 60 + 200),
+                max_tokens: Math.max(1024, commentCount * 150 + 512),
                 temperature: 0.9
             }),
             onload: (response) => {
@@ -593,7 +613,7 @@
             },
             data: JSON.stringify({
                 model: 'claude-haiku-4-5',
-                max_tokens: Math.max(400, commentCount * 60 + 200),
+                max_tokens: Math.max(1024, commentCount * 150 + 512),
                 temperature: 0.9,
                 system: 'You must output valid JSON only. Format: { "comments": [{"text": "...", "color": "white|blue|green|red"}] }',
                 messages: [
@@ -635,7 +655,7 @@
                 contents: [{ role: 'user', parts: [{ text: prompt }] }],
                 generationConfig: {
                     temperature: 0.9,
-                    maxOutputTokens: Math.max(400, commentCount * 60 + 200),
+                    maxOutputTokens: Math.max(1024, commentCount * 150 + 512),
                     responseMimeType: 'application/json',
                     thinkingConfig: { thinkingBudget: 0 }
                 }
@@ -710,15 +730,15 @@ ${chatNote}
    - 感情を挟まず、極めて冷静に戦況やエリア状況、使用アイテム等を短く分析する。
    - 「多重CF（コントロールフィールド）の起点アンカーになってるな」「ポータルキー（Key）の管理がしっかりしてる」「Aegisシールド頑丈すぎ」「ウルトラストライク（US）でシールドを剥がされたか」「XMP8（レベル8バースター）で更地にされた模様」「ポータルレベル（P8など）の維持に動いてる」「リンクカットで多層が崩壊したな」「MU（マインドユニット）の稼ぎがでかい」「無計画なクソリンクで多重の邪魔になってるな」など。
 
-3. 【レジスタンス（RES/青）陣営バイアス】（全体の3%以下・blue）
-   - ★RESが青リンクを引いた / ENLの緑ポータルや緑CFが破壊されたログがある場合のみ出す。
-   - 自陣営（RES/青）の行動を称え、相手陣営（ENL/緑）を皮肉る。
+3. 【レジスタンス（RES/青）陣営バイアス】（全体の10%程度・必ず1件以上・blue）
+   - RESに有利なログ（青リンク・青CF形成・ENLポータル破壊など）があれば積極的に出す。そういったログがなくても1件は必ず生成すること。
+   - 自陣営（RES/青）の行動を称え、相手陣営（ENL/緑）を皮肉る短いコメント。
    - 「青いコントロールフィールドが美しい」「人類の自由と知性を守るレジスタンス！」「緑の精神汚染（シェイパー）をADA様と共に拒絶する」「青リンクで世界を覆い尽くせ」「緑のCFが崩壊してXMが澄んでいく」など。
 
-4. 【エンライテンド（ENL/緑）陣営バイアス】（全体の3%以下・green）
-   - ★ENLが緑リンクを引いた / RESの青ポータルや青CFが破壊されたログがある場合のみ出す。
-   - 自陣営（ENL/緑）の行動を称え、相手陣営（RES/青）を皮肉る。
-   - 「シェイパーの導きによる人類進化！」「やはり緑のCFこそ至高」「ジャービス神に救済されよ」「青い束縛から解放し、啓発（エンライトン）するのだ」「青い壁を壊してXM of 光を受け入れよう」など。
+4. 【エンライテンド（ENL/緑）陣営バイアス】（全体の10%程度・必ず1件以上・green）
+   - ENLに有利なログ（緑リンク・緑CF形成・RESポータル破壊など）があれば積極的に出す。そういったログがなくても1件は必ず生成すること。
+   - 自陣営（ENL/緑）の行動を称え、相手陣営（RES/青）を皮肉る短いコメント。
+   - 「シェイパーの導きによる人類進化！」「やはり緑のCFこそ至高」「ジャービス神に救済されよ」「青い束縛から解放し、啓発（エンライトン）するのだ」「青い壁を壊してXMの光を受け入れよう」など。
 
 5. 【MACHINA（マキナ/赤）の侵食】（全体の1%以下・red）
    - 謎の第3勢力「MACHINA（赤い人工知能）」の不気味な自動侵食コメント。
