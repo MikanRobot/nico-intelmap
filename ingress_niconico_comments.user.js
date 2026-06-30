@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.4.4
+// @version      1.5.0
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -43,6 +43,22 @@
         maxEvents: 5,
         // AIコメントの表示文字色
         color: '#ff99ff',
+    };
+
+    // =============================================
+    // コントロールパネルUIのテーマカラー（Ingress Intel Map準拠）
+    // =============================================
+    const UI_THEME = {
+        bg: 'rgba(7, 31, 38, 0.92)',      // パネル背景（ダークティール）
+        bgInput: 'rgba(0, 18, 24, 0.85)', // 入力欄背景
+        bgSub: 'rgba(0, 40, 50, 0.4)',    // サブ領域背景
+        border: '#20767c',                // 枠線（ティール）
+        accent: '#26c6da',                // 主アクセント（シアン）
+        accentDim: '#6fb3b8',             // 補助テキスト（くすみシアン）
+        active: '#ffb24a',                // アクティブ強調（オレンジ）
+        text: '#cfeef0',                  // 通常テキスト
+        ok: '#44ff88',                    // 成功
+        err: '#ff6b6b',                   // エラー
     };
 
     // =============================================
@@ -1105,11 +1121,12 @@ ${logLines}`;
             bottom: '30px',
             right: '10px',
             zIndex: '10001',
-            background: 'rgba(0,0,0,0.85)',
-            border: '1px solid #555',
-            borderRadius: '8px',
+            background: UI_THEME.bg,
+            border: `1px solid ${UI_THEME.border}`,
+            borderRadius: '6px',
+            boxShadow: `0 0 12px rgba(38,198,218,0.25), inset 0 0 20px rgba(0,0,0,0.4)`,
             padding: '10px 14px',
-            color: '#fff',
+            color: UI_THEME.text,
             fontSize: '13px',
             fontFamily: 'sans-serif',
             cursor: 'default',
@@ -1120,19 +1137,19 @@ ${logLines}`;
         const savedApiKey = GM_getValue('NICO_OPENAI_API_KEY', '');
 
         panel.innerHTML = `
-            <div id="nico-drag-handle" style="font-weight:bold;margin-bottom:8px;letter-spacing:1px;border-bottom:1px solid #555;padding-bottom:5px;cursor:move;display:flex;align-items:center;justify-content:space-between;" title="ドラッグして移動">
+            <div id="nico-drag-handle" style="font-weight:bold;margin-bottom:8px;letter-spacing:1px;border-bottom:1px solid ${UI_THEME.border};padding-bottom:5px;cursor:move;display:flex;align-items:center;justify-content:space-between;color:${UI_THEME.accent};text-shadow:0 0 6px rgba(38,198,218,0.5);" title="ドラッグして移動">
                 <span style="display:flex;align-items:center;gap:8px;">
                     🎌 ニコニコインテルマップ
-                    <a href="https://github.com/MikanRobot/nico-intelmap" target="_blank" style="font-size:10px;color:#88aaff;text-decoration:none;background:rgba(91,143,255,0.15);border:1px solid rgba(91,143,255,0.4);border-radius:4px;padding:1px 6px;white-space:nowrap;">詳細</a>
+                    <a href="https://github.com/MikanRobot/nico-intelmap" target="_blank" style="font-size:10px;color:${UI_THEME.accent};text-decoration:none;background:rgba(38,198,218,0.12);border:1px solid ${UI_THEME.border};border-radius:4px;padding:1px 6px;white-space:nowrap;">詳細</a>
                 </span>
-                <button id="nico-toggle" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:0 4px;line-height:1;" title="開く">▲</button>
+                <button id="nico-toggle" style="background:none;border:none;color:${UI_THEME.accent};font-size:16px;cursor:pointer;padding:0 4px;line-height:1;" title="開く">▲</button>
             </div>
 
             <div id="nico-body" style="display:none;">
                 <!-- タブバー -->
-                <div style="display:flex;margin-bottom:10px;border-bottom:1px solid #555;">
-                    <button id="nico-tab-btn-main" style="flex:1;background:#333;border:none;border-bottom:2px solid #88aaff;color:#88aaff;padding:5px 4px;font-size:12px;cursor:pointer;">メイン</button>
-                    <button id="nico-tab-btn-api"  style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:#888;padding:5px 4px;font-size:12px;cursor:pointer;">API設定</button>
+                <div style="display:flex;margin-bottom:10px;border-bottom:1px solid ${UI_THEME.border};">
+                    <button id="nico-tab-btn-main" style="flex:1;background:rgba(255,178,74,0.12);border:none;border-bottom:2px solid ${UI_THEME.active};color:${UI_THEME.active};padding:5px 4px;font-size:12px;cursor:pointer;">メイン</button>
+                    <button id="nico-tab-btn-api"  style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:${UI_THEME.accentDim};padding:5px 4px;font-size:12px;cursor:pointer;">API設定</button>
                 </div>
 
                 <!-- メインタブ -->
@@ -1142,72 +1159,72 @@ ${logLines}`;
                     </div>
                     <div style="margin-bottom:12px;display:flex;align-items:center;gap:6px;">
                         <label style="white-space:nowrap;font-size:12px;">コメント数:</label>
-                        <input type="number" id="nico-comment-count" min="1" max="100" value="${GM_getValue('NICO_COMMENT_COUNT', 7)}" style="width:60px;padding:3px;background:#222;color:#fff;border:1px solid #444;border-radius:3px;text-align:center;">
-                        <span style="font-size:11px;color:#aaa;">個 (1〜100)</span>
+                        <input type="number" id="nico-comment-count" min="1" max="100" value="${GM_getValue('NICO_COMMENT_COUNT', 7)}" style="width:60px;padding:3px;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;text-align:center;">
+                        <span style="font-size:11px;color:${UI_THEME.accentDim};">個 (1〜100)</span>
                     </div>
-                    <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid #444;">
+                    <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid ${UI_THEME.border};">
                         <label><input type="checkbox" id="nico-speech-enabled" ${GM_getValue('NICO_SPEECH_ENABLED', false) ? 'checked' : ''}> 🔊 音声読み上げ</label>
                     </div>
-                    <div style="margin-bottom:4px;padding-top:8px;border-top:1px solid #444;display:flex;align-items:center;justify-content:space-between;">
+                    <div style="margin-bottom:4px;padding-top:8px;border-top:1px solid ${UI_THEME.border};display:flex;align-items:center;justify-content:space-between;">
                         <label><input type="checkbox" id="nico-debug-enabled"> 🛠️ デバッグ表示</label>
-                        <button id="nico-debug-copy" style="display:none;background:#333;border:1px solid #555;color:#aaa;font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;" title="ログをクリップボードにコピーしてAIに貼り付けてデバッグできます">📋 コピー</button>
+                        <button id="nico-debug-copy" style="display:none;background:rgba(38,198,218,0.12);border:1px solid ${UI_THEME.border};color:${UI_THEME.accent};font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;" title="ログをクリップボードにコピーしてAIに貼り付けてデバッグできます">📋 コピー</button>
                     </div>
-                    <div id="nico-debug-log" style="display:none;background:#111;color:#ccc;font-size:11px;height:70px;overflow-y:auto;padding:4px;margin-bottom:8px;border:1px solid #444;border-radius:3px;word-break:break-all;"></div>
+                    <div id="nico-debug-log" style="display:none;background:${UI_THEME.bgInput};color:${UI_THEME.text};font-size:11px;height:70px;overflow-y:auto;padding:4px;margin-bottom:8px;border:1px solid ${UI_THEME.border};border-radius:3px;word-break:break-all;"></div>
                     <div style="flex: 1;"></div>
                 </div>
 
                 <!-- API設定タブ -->
                 <div id="nico-tab-api" style="display:none;">
-                    <div style="font-size:10px;color:#888;margin-bottom:8px;">✅ チェックしたAPIを上から順に使用し、失敗時は次へフォールバックします。</div>
+                    <div style="font-size:10px;color:${UI_THEME.accentDim};margin-bottom:8px;">✅ チェックしたAPIを上から順に使用し、失敗時は次へフォールバックします。</div>
                     <div style="margin-bottom:10px;">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
-                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;">
+                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:${UI_THEME.accentDim};cursor:pointer;">
                                 <input type="checkbox" id="nico-openai-enabled" ${GM_getValue('NICO_OPENAI_ENABLED', true) ? 'checked' : ''}>
                                 <span>① OpenAI API Key</span>
                             </label>
                         </div>
-                        <input type="password" id="nico-openai-key" placeholder="sk-..." value="${savedApiKey}" style="width:100%;padding:4px;box-sizing:border-box;background:#222;color:#fff;border:1px solid #444;border-radius:3px;">
+                        <input type="password" id="nico-openai-key" placeholder="sk-..." value="${savedApiKey}" style="width:100%;padding:4px;box-sizing:border-box;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;">
                         <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
                             <span style="display:flex;align-items:center;gap:6px;">
-                                <span id="nico-apikey-status" style="font-size:11px;color:#aaa;">${savedApiKey ? '⏳ 未検証' : '❌ 未設定'}</span>
-                                <span id="nico-openai-badge" style="display:none;font-size:10px;color:#ffdd44;background:rgba(255,221,68,0.15);border:1px solid rgba(255,221,68,0.4);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
+                                <span id="nico-apikey-status" style="font-size:11px;color:${UI_THEME.accentDim};">${savedApiKey ? '⏳ 未検証' : '❌ 未設定'}</span>
+                                <span id="nico-openai-badge" style="display:none;font-size:10px;color:${UI_THEME.active};background:rgba(255,178,74,0.15);border:1px solid rgba(255,178,74,0.5);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
                             </span>
-                            <a href="https://platform.openai.com/api-keys" target="_blank" style="color:#88aaff;font-size:10px;text-decoration:none;">🔑 取得方法</a>
+                            <a href="https://platform.openai.com/api-keys" target="_blank" style="color:${UI_THEME.accent};font-size:10px;text-decoration:none;">🔑 取得方法</a>
                         </div>
                     </div>
                     <div style="margin-bottom:10px;">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
-                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;">
+                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:${UI_THEME.accentDim};cursor:pointer;">
                                 <input type="checkbox" id="nico-claude-enabled" ${GM_getValue('NICO_CLAUDE_ENABLED', true) ? 'checked' : ''}>
                                 <span>② Claude API Key</span>
                             </label>
                         </div>
-                        <input type="password" id="nico-claude-key" placeholder="sk-ant-..." value="${GM_getValue('NICO_CLAUDE_API_KEY', '')}" style="width:100%;padding:4px;box-sizing:border-box;background:#222;color:#fff;border:1px solid #444;border-radius:3px;">
+                        <input type="password" id="nico-claude-key" placeholder="sk-ant-..." value="${GM_getValue('NICO_CLAUDE_API_KEY', '')}" style="width:100%;padding:4px;box-sizing:border-box;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;">
                         <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
                             <span style="display:flex;align-items:center;gap:6px;">
-                                <span id="nico-claude-status" style="font-size:11px;color:#aaa;">${GM_getValue('NICO_CLAUDE_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
-                                <span id="nico-claude-badge" style="display:none;font-size:10px;color:#ffdd44;background:rgba(255,221,68,0.15);border:1px solid rgba(255,221,68,0.4);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
+                                <span id="nico-claude-status" style="font-size:11px;color:${UI_THEME.accentDim};">${GM_getValue('NICO_CLAUDE_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
+                                <span id="nico-claude-badge" style="display:none;font-size:10px;color:${UI_THEME.active};background:rgba(255,178,74,0.15);border:1px solid rgba(255,178,74,0.5);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
                             </span>
-                            <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#88aaff;font-size:10px;text-decoration:none;">🔑 取得方法</a>
+                            <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:${UI_THEME.accent};font-size:10px;text-decoration:none;">🔑 取得方法</a>
                         </div>
                     </div>
                     <div style="margin-bottom:6px;">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
-                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#aaa;cursor:pointer;">
+                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:${UI_THEME.accentDim};cursor:pointer;">
                                 <input type="checkbox" id="nico-gemini-enabled" ${GM_getValue('NICO_GEMINI_ENABLED', true) ? 'checked' : ''}>
                                 <span>③ Gemini API Key</span>
                             </label>
                         </div>
-                        <input type="password" id="nico-gemini-key" placeholder="AIza..." value="${GM_getValue('NICO_GEMINI_API_KEY', '')}" style="width:100%;padding:4px;box-sizing:border-box;background:#222;color:#fff;border:1px solid #444;border-radius:3px;">
+                        <input type="password" id="nico-gemini-key" placeholder="AIza..." value="${GM_getValue('NICO_GEMINI_API_KEY', '')}" style="width:100%;padding:4px;box-sizing:border-box;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;">
                         <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
                             <span style="display:flex;align-items:center;gap:6px;">
-                                <span id="nico-gemini-status" style="font-size:11px;color:#aaa;">${GM_getValue('NICO_GEMINI_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
-                                <span id="nico-gemini-badge" style="display:none;font-size:10px;color:#ffdd44;background:rgba(255,221,68,0.15);border:1px solid rgba(255,221,68,0.4);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
+                                <span id="nico-gemini-status" style="font-size:11px;color:${UI_THEME.accentDim};">${GM_getValue('NICO_GEMINI_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
+                                <span id="nico-gemini-badge" style="display:none;font-size:10px;color:${UI_THEME.active};background:rgba(255,178,74,0.15);border:1px solid rgba(255,178,74,0.5);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
                             </span>
-                            <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#88aaff;font-size:10px;text-decoration:none;">🔑 取得方法</a>
+                            <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:${UI_THEME.accent};font-size:10px;text-decoration:none;">🔑 取得方法</a>
                         </div>
                     </div>
-                    <div id="nico-api-active-summary" style="margin-top:12px;padding:8px;background:rgba(255,255,255,0.05);border:1px solid #555;border-radius:4px;font-size:11px;line-height:1.4;color:#ccc;">
+                    <div id="nico-api-active-summary" style="margin-top:12px;padding:8px;background:${UI_THEME.bgSub};border:1px solid ${UI_THEME.border};border-radius:4px;font-size:11px;line-height:1.4;color:${UI_THEME.text};">
                         ⏳ 読み込み中...
                     </div>
                 </div>
@@ -1215,6 +1232,9 @@ ${logLines}`;
         `;
 
         document.body.appendChild(panel);
+
+        // チェックボックスのアクセントカラーをIntelテーマのシアンに統一
+        panel.style.accentColor = UI_THEME.accent;
 
         // --- コントロールイベント処理 ---
 
@@ -1249,10 +1269,12 @@ ${logLines}`;
             const isMain = tab === 'main';
             document.getElementById('nico-tab-main').style.display = isMain ? '' : 'none';
             document.getElementById('nico-tab-api').style.display = isMain ? 'none' : '';
-            document.getElementById('nico-tab-btn-main').style.borderBottomColor = isMain ? '#88aaff' : 'transparent';
-            document.getElementById('nico-tab-btn-api').style.borderBottomColor = isMain ? 'transparent' : '#88aaff';
-            document.getElementById('nico-tab-btn-main').style.color = isMain ? '#88aaff' : '#888';
-            document.getElementById('nico-tab-btn-api').style.color = isMain ? '#888' : '#88aaff';
+            document.getElementById('nico-tab-btn-main').style.borderBottomColor = isMain ? UI_THEME.active : 'transparent';
+            document.getElementById('nico-tab-btn-api').style.borderBottomColor = isMain ? 'transparent' : UI_THEME.active;
+            document.getElementById('nico-tab-btn-main').style.color = isMain ? UI_THEME.active : UI_THEME.accentDim;
+            document.getElementById('nico-tab-btn-api').style.color = isMain ? UI_THEME.accentDim : UI_THEME.active;
+            document.getElementById('nico-tab-btn-main').style.background = isMain ? 'rgba(255,178,74,0.12)' : 'none';
+            document.getElementById('nico-tab-btn-api').style.background = isMain ? 'none' : 'rgba(255,178,74,0.12)';
         }
         document.getElementById('nico-tab-btn-main').addEventListener('click', () => switchTab('main'));
         document.getElementById('nico-tab-btn-api').addEventListener('click', () => switchTab('api'));
