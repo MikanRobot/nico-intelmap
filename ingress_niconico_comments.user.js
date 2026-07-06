@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.5.0
+// @version      1.7.0
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -25,8 +25,6 @@
         fontSize: 24,
         // コメントを流すレーンの最大数
         maxLanes: 8,
-        // コメントが表示される最低時間 (ms)
-        minDuration: 4000,
         // コメントの透明度 (0.0〜1.0)
         opacity: 0.85,
         // デバッグログ出力フラグ
@@ -41,8 +39,6 @@
         cooldown: 15000,
         // 1回のリクエストに含める最大イベント数
         maxEvents: 5,
-        // AIコメントの表示文字色
-        color: '#ff99ff',
     };
 
     // =============================================
@@ -120,8 +116,7 @@
         // IITCまたは純正Intel MapのDOM要素を取得
         const mapEl = document.getElementById('map_canvas')
             || document.getElementById('map')
-            || document.querySelector('.leaflet-container')
-            || document.querySelector('#map_canvas');
+            || document.querySelector('.leaflet-container');
 
         if (mapEl) {
             const r = mapEl.getBoundingClientRect();
@@ -341,6 +336,9 @@
         // プラグインが無効化されている場合は処理しない
         if (!document.getElementById('nico-enabled')?.checked) return;
 
+        // 自動更新の上限超過後はAPI課金を避けるためAIキューに積まない
+        if (isAiCallBudgetExhausted()) return;
+
         if (isChat) hasChatLog = true;
 
         // APIキーが設定されているか確認
@@ -391,7 +389,7 @@
         speechSynthesis.speak(uttr);
         addDebugLog('🔊 音声合成の初期化に成功しました', '#aaffaa');
     };
-    ['click', 'mousedown', 'keydown', 'touchstart'].forEach(e => {
+    ['click', 'mousedown', 'pointerdown', 'keydown', 'touchstart'].forEach(e => {
         document.addEventListener(e, unlockAudio, { once: true });
     });
 
@@ -511,7 +509,6 @@
         addDebugLog(`[${apiName}] AIコメント受信(${comments.length}件): ${comments.map(c => `[${c.color}]${c.text}`).join(', ')}`, '#aaffaa');
 
         const isSpeechEnabled = GM_getValue('NICO_SPEECH_ENABLED', false);
-        let maxDelay = 0;
 
         comments.forEach((comment, index) => {
             // MACHINA（赤）用の文字フィルタリング処理
@@ -525,7 +522,6 @@
 
             // 描画開始時間をランダムに遅延させて重なりを軽減
             const delay = Math.random() * 3000 + (index * 800);
-            if (delay > maxDelay) maxDelay = delay;
 
             setTimeout(() => {
                 let color;
@@ -557,10 +553,16 @@
                         const engVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Samantha') || v.name.includes('Victoria') || v.name.includes('Karen') || v.name.includes('Google US') || v.name.includes('Female')));
                         if (engVoice) uttr.voice = engVoice;
                     } else {
-                        // 一般エージェント用の日本語音声設定
+                        // 一般エージェント用の日本語音声設定（読み上げモードにより速度・ピッチを切替）
+                        const speechMode = GM_getValue('NICO_SPEECH_MODE', 'yukkuri');
                         uttr.lang = 'ja-JP';
-                        uttr.rate = 1.15;
-                        uttr.pitch = 1.3;
+                        if (speechMode === 'normal') {
+                            uttr.rate = 1.0;
+                            uttr.pitch = 1.0;
+                        } else {
+                            uttr.rate = 1.15;
+                            uttr.pitch = 1.3;
+                        }
                         const jpVoice = voices.find(v => v.lang.startsWith('ja') && (v.name.includes('Kyoko') || v.name.includes('Google 日本語') || v.name.includes('Megumi')));
                         if (jpVoice) uttr.voice = jpVoice;
                     }
@@ -569,6 +571,75 @@
                 }
             }, delay);
         });
+    }
+
+    // APIコストの概算用単価（USD / 1Mトークン）。実際の料金とは変動しうるため、あくまで大まかな目安。
+    const PRICING_USD_PER_1M = {
+        OpenAI: { input: 0.15, output: 0.60 },  // gpt-4o-mini
+        Claude: { input: 1.00, output: 5.00 },  // claude-haiku-4-5
+        Gemini: { input: 0.30, output: 2.50 },  // gemini-2.5-flash
+    };
+
+    // 累計コスト管理（セッション累計はメモリ上、日次累計はGM_setValueに永続化）
+    let sessionCostUsd = 0;
+
+    /**
+     * ローカルタイムゾーン基準の日付キー（YYYY-MM-DD）を返す
+     */
+    function getLocalDateKey() {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    /**
+     * 概算コストをセッション累計・日次累計に加算し、パネル表示を更新する
+     */
+    function addCostUsd(costUsd) {
+        sessionCostUsd += costUsd;
+        const today = getLocalDateKey();
+        if (GM_getValue('NICO_COST_DATE', '') !== today) {
+            // 日付が変わっていたら日次累計をリセット
+            GM_setValue('NICO_COST_DATE', today);
+            GM_setValue('NICO_COST_DAILY', 0);
+        }
+        GM_setValue('NICO_COST_DAILY', GM_getValue('NICO_COST_DAILY', 0) + costUsd);
+        updateCostDisplay();
+    }
+
+    /**
+     * パネル上の累計コスト表示（本日／セッション）を最新状態に更新する
+     */
+    function updateCostDisplay() {
+        const dailyEl = document.getElementById('nico-cost-daily');
+        const sessionEl = document.getElementById('nico-cost-session');
+        if (!dailyEl && !sessionEl) return;
+        const daily = GM_getValue('NICO_COST_DATE', '') === getLocalDateKey() ? GM_getValue('NICO_COST_DAILY', 0) : 0;
+        if (dailyEl) dailyEl.textContent = `$${daily.toFixed(5)}`;
+        if (sessionEl) sessionEl.textContent = `$${sessionCostUsd.toFixed(5)}`;
+    }
+
+    /**
+     * APIのトークン消費量と概算コストをデバッグログに出力し、累計に加算する
+     */
+    function logTokenUsage(apiName, inputTokens, outputTokens) {
+        if (inputTokens === undefined || outputTokens === undefined) return;
+        const rate = PRICING_USD_PER_1M[apiName];
+        const totalTokens = inputTokens + outputTokens;
+        const costUsd = (inputTokens / 1e6) * rate.input + (outputTokens / 1e6) * rate.output;
+        addDebugLog(`[${apiName}] トークン消費: 入力${inputTokens} / 出力${outputTokens} (計${totalTokens}) — 推定コスト: 約$${costUsd.toFixed(5)} (目安)`, '#88ccff');
+        addCostUsd(costUsd);
+    }
+
+    /**
+     * APIのエラーレスポンス本文から人間可読なエラーメッセージを抽出する共通処理
+     */
+    function extractApiErrorMessage(responseText) {
+        try {
+            const body = JSON.parse(responseText);
+            return body?.error?.message || responseText.slice(0, 200);
+        } catch {
+            return (responseText || '').slice(0, 200);
+        }
     }
 
     /**
@@ -596,12 +667,13 @@
             }),
             onload: (response) => {
                 if (response.status !== 200) {
-                    addDebugLog(`[OpenAI] エラー(${response.status})。次のAPIにフォールバックします...`, '#ffaa44');
+                    addDebugLog(`[OpenAI] エラー(${response.status}): ${extractApiErrorMessage(response.responseText)}`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
                 try {
                     const res = JSON.parse(response.responseText);
+                    if (res.usage) logTokenUsage('OpenAI', res.usage.prompt_tokens, res.usage.completion_tokens);
                     if (res.choices && res.choices.length > 0) {
                         handleAiComments(res.choices[0].message.content.trim(), 'OpenAI');
                     }
@@ -638,12 +710,13 @@
             }),
             onload: (response) => {
                 if (response.status !== 200) {
-                    addDebugLog(`[Claude] エラー(${response.status})。次のAPIにフォールバックします...`, '#ffaa44');
+                    addDebugLog(`[Claude] エラー(${response.status}): ${extractApiErrorMessage(response.responseText)}`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
                 try {
                     const res = JSON.parse(response.responseText);
+                    if (res.usage) logTokenUsage('Claude', res.usage.input_tokens, res.usage.output_tokens);
                     if (res.content && res.content.length > 0) {
                         handleAiComments(res.content[0].text.trim(), 'Claude');
                     }
@@ -678,12 +751,13 @@
             }),
             onload: (response) => {
                 if (response.status !== 200) {
-                    addDebugLog(`[Gemini] エラー(${response.status})。次のAPIにフォールバックします...`, '#ffaa44');
+                    addDebugLog(`[Gemini] エラー(${response.status}): ${extractApiErrorMessage(response.responseText)}`, '#ffaa44');
                     if (onRetry) onRetry();
                     return;
                 }
                 try {
                     const res = JSON.parse(response.responseText);
+                    if (res.usageMetadata) logTokenUsage('Gemini', res.usageMetadata.promptTokenCount, res.usageMetadata.candidatesTokenCount);
                     const parts = res?.candidates?.[0]?.content?.parts || [];
                     const text = parts.find(p => p.text && !p.thought)?.text?.trim();
                     if (text) handleAiComments(text, 'Gemini');
@@ -696,10 +770,39 @@
     }
 
     /**
+     * 現在の時間帯・曜日に応じた「エージェントの生活感」コンテキストをプロンプト用に生成する
+     */
+    function getTimePersonaNote() {
+        const now = new Date();
+        const hour = now.getHours();
+        const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+
+        let timeNote;
+        if (hour < 4) {
+            timeNote = '深夜（0〜4時）。深夜徘徊・寝落ち寸前・「明日仕事なのに」・不審者扱いや職質リスクといった深夜AGあるあるの時間帯';
+        } else if (hour < 7) {
+            timeNote = '早朝（4〜7時）。朝活AG・始発前のワンデプロイ・散歩ついでのリチャージといった早朝あるあるの時間帯';
+        } else if (hour < 9) {
+            timeNote = '通勤・通学時間帯（7〜9時）。出勤前のワンデプロイ・電車内からのリチャージ・遅刻リスクといったあるあるの時間帯';
+        } else if (hour < 17) {
+            timeNote = '日中（9〜17時）。営業車AG・昼休みのファーム巡回・仕事サボり疑惑といったあるあるの時間帯';
+        } else if (hour < 20) {
+            timeNote = '夕方〜帰宅時間帯（17〜20時）。帰宅ついでの寄り道デプロイ・晩飯前のひと焼きといったあるあるの時間帯';
+        } else {
+            timeNote = '夜（20〜24時）。夕食後の散歩AG・夜活・寝る前の防衛リチャージといったあるあるの時間帯';
+        }
+        const weekendNote = isWeekend
+            ? 'さらに今日は週末なので、遠征・ロングリンク作戦・アノマリー・ミッションデイなど休日ならではのネタも使ってよい。'
+            : '';
+        return `【現在の時間帯コンテキスト】現地時間は${timeNote}。${weekendNote}コメントのうち2〜3件程度に、この時間帯ならではの生活感をさりげなく反映させること（全コメントに入れるのは不自然なので禁止）。`;
+    }
+
+    /**
      * APIを呼び出してAIコメントを生成・トリガーする
      */
     function triggerAiComment(isForce = false) {
         if (eventQueue.length === 0 && !isForce) return;
+        if (!isForce && isAiCallBudgetExhausted()) return;
 
         addDebugLog(`--- AI呼び出し開始 (手動: ${isForce}) ---`, '#cccccc');
 
@@ -727,6 +830,7 @@
 
         const prompt = `あなたは位置情報ゲーム「Ingress（イングレス）」のCOMM ALLログ（ポータル占領、リンク確立、コントロールフィールド形成、チャットなど）を観察しているユーザーです。そのログに基づいて、ニコニコ動画のコメント欄に流れるような、Ingressのエージェント（プレイヤー：AG）達による非常にリアルでディープなコメントを生成してください。
 ${chatNote}
+${getTimePersonaNote()}
 
 **重要ルール**:
 - Ingressのリアルなプレイヤーが日常的に使う専門用語、俗称、ネットスラング（例：焼く、更地、デプロイ、リチャージ、スキャナ、ノヴァ、多重、多層、沈める、自撮り、アプグレ、白ポ、カプセル、ファーム、バースターなど）をふんだんに取り入れること。
@@ -747,14 +851,14 @@ ${chatNote}
    - 「多重CF（コントロールフィールド）の起点アンカーになってるな」「ポータルキー（Key）の管理がしっかりしてる」「Aegisシールド頑丈すぎ」「ウルトラストライク（US）でシールドを剥がされたか」「XMP8（レベル8バースター）で更地にされた模様」「ポータルレベル（P8など）の維持に動いてる」「リンクカットで多層が崩壊したな」「MU（マインドユニット）の稼ぎがでかい」「無計画なクソリンクで多重の邪魔になってるな」など。
 
 3. 【レジスタンス（RES/青）陣営バイアス】（全体の10%程度・必ず1件以上・blue）
-   - RESに有利なログ（青リンク・青CF形成・ENLポータル破壊など）があれば積極的に出す。そういったログがなくても1件は必ず生成すること。
-   - 自陣営（RES/青）の行動を称え、相手陣営（ENL/緑）を皮肉る短いコメント。
-   - 「青いコントロールフィールドが美しい」「人類の自由と知性を守るレジスタンス！」「緑の精神汚染（シェイパー）をADA様と共に拒絶する」「青リンクで世界を覆い尽くせ」「緑のCFが崩壊してXMが澄んでいく」など。
+   - **ログの内容に関わらず、必ず1件以上生成すること。** ログにRES有利な内容（青リンク・青CF形成・ENLポータル破壊など）があればそれに絡めてよいが、なくてもRES目線の贔屓コメントを生成すること。
+   - これは1.の一般エージェントのような中立的・客観的な実況コメントでは**絶対にない**。自陣営（RES/青）を無条件に称賛・礼賛し、相手陣営（ENL/緑）を見下す・挑発する強い感情のこもった一言を**必ず含める**こと。
+   - 「青いコントロールフィールドが美しい」「人類の自由と知性を守るレジスタンス！」「緑の精神汚染（シェイパー）をADA様と共に拒絶する」「青リンクで世界を覆い尽くせ」「緑のCFが崩壊してXMが澄んでいく」「所詮シェイパーの操り人形には負けん」など。
 
 4. 【エンライテンド（ENL/緑）陣営バイアス】（全体の10%程度・必ず1件以上・green）
-   - ENLに有利なログ（緑リンク・緑CF形成・RESポータル破壊など）があれば積極的に出す。そういったログがなくても1件は必ず生成すること。
-   - 自陣営（ENL/緑）の行動を称え、相手陣営（RES/青）を皮肉る短いコメント。
-   - 「シェイパーの導きによる人類進化！」「やはり緑のCFこそ至高」「ジャービス神に救済されよ」「青い束縛から解放し、啓発（エンライトン）するのだ」「青い壁を壊してXMの光を受け入れよう」など。
+   - **ログの内容に関わらず、必ず1件以上生成すること。** ログにENL有利な内容（緑リンク・緑CF形成・RESポータル破壊など）があればそれに絡めてよいが、なくてもENL目線の贔屓コメントを生成すること。
+   - これは1.の一般エージェントのような中立的・客観的な実況コメントでは**絶対にない**。自陣営（ENL/緑）を無条件に称賛・礼賛し、相手陣営（RES/青）を見下す・挑発する強い感情のこもった一言を**必ず含める**こと。
+   - 「シェイパーの導きによる人類進化！」「やはり緑のCFこそ至高」「ジャービス神に救済されよ」「青い束縛から解放し、啓発（エンライトン）するのだ」「青い壁を壊してXMの光を受け入れよう」「レジスタンスの旧時代の自由なぞ幻想に過ぎん」など。
 
 5. 【MACHINA（マキナ/赤）の侵食】（全体の1%以下・red）
    - 謎の第3勢力「MACHINA（赤い人工知能）」の不気味な自動侵食コメント。
@@ -808,6 +912,37 @@ ${logLines}`;
     let commLogBuffer = [];           // AIコメントの文脈生成用に蓄積するCOMMログ履歴
     const COMM_LOG_MAX = 50;
 
+    // Intel Mapの自動読み込み（定期ポーリング）でAI呼び出しを許可する上限回数。超えるとAPI課金を避けるためコメント生成を停止する
+    const MAX_AUTO_REFRESHES = 5;
+    let maxAutoRefreshes = MAX_AUTO_REFRESHES; // 「+5回延長」ボタンで実行中に加算される現在の上限
+    let autoRefreshCount = 0;
+    let autoRefreshCapNotified = false;
+
+    /**
+     * 自動更新の上限超過でAI呼び出し予算が尽きているか判定する
+     * （カウント自体は ingestPlextEntries() が新規ログ検出時に加算する）
+     */
+    function isAiCallBudgetExhausted() {
+        if (autoRefreshCount <= maxAutoRefreshes) return false;
+        if (!autoRefreshCapNotified) {
+            autoRefreshCapNotified = true;
+            addDebugLog(`自動更新が上限（${maxAutoRefreshes}回）に達したため、以降のコメント生成（API呼び出し）を停止しました。パネルの「+${MAX_AUTO_REFRESHES}回延長」で再開できます`, '#ffaa44');
+            updateAiBudgetDisplay();
+        }
+        return true;
+    }
+
+    /**
+     * パネル上のAI生成回数カウンター表示を最新状態に更新する
+     */
+    function updateAiBudgetDisplay() {
+        const el = document.getElementById('nico-refresh-count');
+        if (!el) return;
+        el.textContent = `${Math.min(autoRefreshCount, maxAutoRefreshes)}/${maxAutoRefreshes}`;
+        el.style.color = autoRefreshCount > maxAutoRefreshes ? UI_THEME.err
+            : (autoRefreshCount >= maxAutoRefreshes ? UI_THEME.active : UI_THEME.ok);
+    }
+
     /**
      * 同一タイムスタンプでグループ化されたログ行をまとめてキューに流す共通処理
      */
@@ -843,6 +978,74 @@ ${logLines}`;
         return { text, isChat };
     }
 
+    // AIコメント生成対象から除外するシステムノイズのキーワード（重複・冗長ログ）
+    const NOISE_KEYWORDS = ['under attack by', 'neutralized by', 'destroyed by'];
+
+    /**
+     * システムノイズ（重複・冗長ログ）に該当するテキストか判定する共通処理
+     */
+    function isNoiseLog(text) {
+        return NOISE_KEYWORDS.some(keyword => text.includes(keyword));
+    }
+
+    /**
+     * ソート済みの [guid, plextエントリ] ペア群を解析し、ログのグループ化・蓄積・AIキュー投入まで行う共通処理
+     * 新規（未読）ログを含む呼び出しを「自動更新1回」としてカウントする
+     * @param {Array<[string, Array]>} pairs - タイムスタンプ昇順の [guid, entry] ペア配列
+     * @param {string} sourceLabel - 受信経路をデバッグログに示すラベル
+     */
+    function ingestPlextEntries(pairs, sourceLabel) {
+        if (!pairs.some(([guid]) => !lastCommsMessages.has(guid))) return;
+
+        autoRefreshCount++;
+        addDebugLog(`[自動更新] ${autoRefreshCount}/${maxAutoRefreshes}回目`, '#666666');
+        updateAiBudgetDisplay();
+
+        let hasNew = false;
+        let currentTimestamp = -1;
+        let groupedLogs = [];
+        let isChatGroup = false;
+
+        for (const [guid, entry] of pairs) {
+            if (lastCommsMessages.has(guid)) continue;
+            lastCommsMessages.add(guid);
+
+            const timestamp = entry[1];
+            const parsed = parsePlextEntry(entry);
+            if (!parsed) continue;
+
+            const { text, isChat } = parsed;
+
+            // システムメッセージから不要な重複ログを除外
+            if (isNoiseLog(text)) {
+                addDebugLog(`システムノイズを無視: ${text.slice(0, 30)}...`, '#555555');
+                continue;
+            }
+
+            if (currentTimestamp !== -1 && currentTimestamp !== timestamp) {
+                flushLogGroup(groupedLogs, isChatGroup);
+                groupedLogs = [];
+                isChatGroup = false;
+            }
+
+            const label = isChat ? '[チャット]' : '[システム]';
+            currentTimestamp = timestamp;
+            groupedLogs.push(`${label} ${text}`);
+            if (isChat) isChatGroup = true;
+            hasNew = true;
+        }
+        flushLogGroup(groupedLogs, isChatGroup);
+
+        if (hasNew) {
+            addDebugLog(`${sourceLabel} (バッファ ${commLogBuffer.length}件)`, '#66aaff');
+        }
+
+        // 既読GUIDキャッシュの肥大化防止
+        if (lastCommsMessages.size > 500) {
+            lastCommsMessages = new Set([...lastCommsMessages].slice(-300));
+        }
+    }
+
     /**
      * IITCのチャットログ（COMM ALL）を監視してパース・イベント化する処理
      */
@@ -870,49 +1073,7 @@ ${logLines}`;
             entries = entries.slice(-50);
         }
 
-        let hasNew = false;
-        let currentTimestamp = -1;
-        let groupedLogs = [];
-        let isChatGroup = false;
-
-        for (const [guid, entry] of entries) {
-            if (lastCommsMessages.has(guid)) continue;
-            lastCommsMessages.add(guid);
-
-            const timestamp = entry[1];
-            const parsed = parsePlextEntry(entry);
-            if (!parsed) continue;
-
-            const { text, isChat } = parsed;
-
-            // システムメッセージから不要な重複ログを除外
-            if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon')) {
-                addDebugLog(`システムノイズを無視: ${text.slice(0, 30)}...`, '#555555');
-                continue;
-            }
-
-            if (currentTimestamp !== -1 && currentTimestamp !== timestamp) {
-                flushLogGroup(groupedLogs, isChatGroup);
-                groupedLogs = [];
-                isChatGroup = false;
-            }
-
-            const label = isChat ? '[チャット]' : '[システム]';
-            currentTimestamp = timestamp;
-            groupedLogs.push(`${label} ${text}`);
-            if (isChat) isChatGroup = true;
-            hasNew = true;
-        }
-        flushLogGroup(groupedLogs, isChatGroup);
-
-        if (hasNew) {
-            addDebugLog(`COMM ALLパケット受信 (バッファ ${commLogBuffer.length}件)`, '#66aaff');
-        }
-
-        if (lastCommsMessages.size > 500) {
-            const arr = [...lastCommsMessages];
-            lastCommsMessages = new Set(arr.slice(-300));
-        }
+        ingestPlextEntries(entries, 'COMM ALLパケット受信');
     }
 
     /**
@@ -978,54 +1139,11 @@ ${logLines}`;
      * ネットワークフック経由でパケットデータをパースする
      */
     function processPlextsData(results, isFaction = false) {
-        if (!Array.isArray(results)) return;
+        if (!Array.isArray(results) || results.length === 0) return;
         if (isFaction) return; // Factionチャット（陣営内部発言）はプライバシー保護のためキャプチャ対象外
 
         const sorted = [...results].sort((a, b) => a[1] - b[1]);
-
-        let hasNew = false;
-        let currentTimestamp = -1;
-        let groupedLogs = [];
-        let isChatGroup = false;
-
-        for (const entry of sorted) {
-            const guid = entry[0];
-            const timestamp = entry[1];
-            if (lastCommsMessages.has(guid)) continue;
-            lastCommsMessages.add(guid);
-
-            const parsed = parsePlextEntry(entry);
-            if (!parsed) continue;
-
-            const { text, isChat } = parsed;
-
-            if (text.includes('under attack by') || text.includes('neutralized by') || text.includes('Battle Beacon')) {
-                addDebugLog(`ノイズ排除: ${text.slice(0, 30)}...`, '#555555');
-                continue;
-            }
-
-            if (currentTimestamp !== -1 && currentTimestamp !== timestamp) {
-                flushLogGroup(groupedLogs, isChatGroup);
-                groupedLogs = [];
-                isChatGroup = false;
-            }
-
-            const label = isChat ? '[チャット]' : '[システム]';
-            currentTimestamp = timestamp;
-            groupedLogs.push(`${label} ${text}`);
-            if (isChat) isChatGroup = true;
-            hasNew = true;
-        }
-        flushLogGroup(groupedLogs, isChatGroup);
-
-        if (hasNew) {
-            addDebugLog(`ネットワークセグメントからCOMM ALL同期 (バッファ ${commLogBuffer.length}件)`, '#66aaff');
-        }
-
-        if (lastCommsMessages.size > 500) {
-            const arr = [...lastCommsMessages];
-            lastCommsMessages = new Set(arr.slice(-300));
-        }
+        ingestPlextEntries(sorted.map(entry => [entry[0], entry]), 'ネットワークからCOMM ALL同期');
     }
 
     // =============================================
@@ -1162,8 +1280,22 @@ ${logLines}`;
                         <input type="number" id="nico-comment-count" min="1" max="100" value="${GM_getValue('NICO_COMMENT_COUNT', 7)}" style="width:60px;padding:3px;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;text-align:center;">
                         <span style="font-size:11px;color:${UI_THEME.accentDim};">個 (1〜100)</span>
                     </div>
+                    <div style="margin-bottom:8px;padding:6px 8px;background:${UI_THEME.bgSub};border:1px solid ${UI_THEME.border};border-radius:4px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;">
+                            <span style="font-size:11px;" title="新規ログを伴う自動読み込みの回数。上限に達するとAPI課金防止のためAIコメント生成を停止します">🔄 AI生成回数: <span id="nico-refresh-count" style="font-weight:bold;color:${UI_THEME.ok};">0/${MAX_AUTO_REFRESHES}</span></span>
+                            <button id="nico-refresh-extend" style="background:rgba(38,198,218,0.12);border:1px solid ${UI_THEME.border};color:${UI_THEME.accent};font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;" title="AIコメント生成の上限回数を${MAX_AUTO_REFRESHES}回分追加します（API利用料が発生します）">＋${MAX_AUTO_REFRESHES}回延長</button>
+                        </div>
+                        <div style="font-size:11px;color:${UI_THEME.accentDim};margin-top:4px;" title="トークン消費量から算出した概算値です。実際の請求額とは異なる場合があります">💰 推定コスト — 本日: <span id="nico-cost-daily" style="color:${UI_THEME.text};">$0.00000</span> / 今回: <span id="nico-cost-session" style="color:${UI_THEME.text};">$0.00000</span></div>
+                    </div>
                     <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid ${UI_THEME.border};">
                         <label><input type="checkbox" id="nico-speech-enabled" ${GM_getValue('NICO_SPEECH_ENABLED', false) ? 'checked' : ''}> 🔊 音声読み上げ</label>
+                    </div>
+                    <div style="margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <label style="white-space:nowrap;font-size:12px;">読み上げ方式:</label>
+                        <select id="nico-speech-mode" style="flex:1;padding:3px;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;">
+                            <option value="yukkuri" ${GM_getValue('NICO_SPEECH_MODE', 'yukkuri') === 'yukkuri' ? 'selected' : ''}>ゆっくり</option>
+                            <option value="normal" ${GM_getValue('NICO_SPEECH_MODE', 'yukkuri') === 'normal' ? 'selected' : ''}>普通</option>
+                        </select>
                     </div>
                     <div style="margin-bottom:4px;padding-top:8px;border-top:1px solid ${UI_THEME.border};display:flex;align-items:center;justify-content:space-between;">
                         <label><input type="checkbox" id="nico-debug-enabled"> 🛠️ デバッグ表示</label>
@@ -1294,6 +1426,20 @@ ${logLines}`;
             if (!speechCb.checked) cancelAllSpeech();
         });
 
+        // 読み上げ方式（ゆっくり／普通）の切り替え
+        const speechModeSelect = document.getElementById('nico-speech-mode');
+        speechModeSelect.addEventListener('change', () => {
+            GM_setValue('NICO_SPEECH_MODE', speechModeSelect.value);
+        });
+
+        // AI生成回数の上限延長ボタン
+        document.getElementById('nico-refresh-extend').addEventListener('click', () => {
+            maxAutoRefreshes += MAX_AUTO_REFRESHES;
+            autoRefreshCapNotified = false; // 次回上限到達時に再度通知できるようにリセット
+            addDebugLog(`AI生成上限を${MAX_AUTO_REFRESHES}回分延長しました（${autoRefreshCount}/${maxAutoRefreshes}）`, '#aaffaa');
+            updateAiBudgetDisplay();
+        });
+
         // システムデバッグログ表示切り替え
         const debugCb = document.getElementById('nico-debug-enabled');
         const debugLog = document.getElementById('nico-debug-log');
@@ -1327,10 +1473,6 @@ ${logLines}`;
             }
         });
 
-        // OpenAI APIキー自動保存と実地検証
-        const apiKeyInput = document.getElementById('nico-openai-key');
-        const apiKeyStatus = document.getElementById('nico-apikey-status');
-
         function updateActiveApiSummary() {
             const summaryEl = document.getElementById('nico-api-active-summary');
             if (!summaryEl) return;
@@ -1349,173 +1491,78 @@ ${logLines}`;
             if (geminiKey && geminiOk) activeApis.push('Gemini');
 
             if (activeApis.length > 0) {
-                summaryEl.innerHTML = `⚙️ <b>読み込み完了</b>:<br>現在 <span style="color:#44ff88;font-weight:bold;">${activeApis.join(', ')}</span> のAPIキーを読み込み、利用中です。（AIコメント生成時にランダムに自動選択・フォールバックされます）`;
-                summaryEl.style.borderColor = '#44ff88';
+                summaryEl.innerHTML = `⚙️ <b>読み込み完了</b>:<br>現在 <span style="color:${UI_THEME.ok};font-weight:bold;">${activeApis.join(', ')}</span> のAPIキーを読み込み、利用中です。（チェック済みのAPIを上から順に使用し、エラー時は次のAPIへ自動フォールバックします）`;
+                summaryEl.style.borderColor = UI_THEME.ok;
             } else {
-                summaryEl.innerHTML = `⚠️ <b>読み込み失敗</b>:<br><span style="color:#ff4444;">有効なAPIキーが読み込まれていません。いずれかのAPI設定を行ってください。</span>`;
-                summaryEl.style.borderColor = '#ff4444';
+                summaryEl.innerHTML = `⚠️ <b>読み込み失敗</b>:<br><span style="color:${UI_THEME.err};">有効なAPIキーが読み込まれていません。いずれかのAPI設定を行ってください。</span>`;
+                summaryEl.style.borderColor = UI_THEME.err;
             }
         }
 
-        function validateApiKey(key) {
-            if (!key) {
-                apiKeyStatus.textContent = '❌ 未設定';
-                apiKeyStatus.style.color = '#ff4444';
-                updateActiveApiSummary();
-                return;
-            }
-            apiKeyStatus.textContent = '⏳ テスト中...';
-            apiKeyStatus.style.color = '#aaa';
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: 'https://api.openai.com/v1/models',
-                headers: { 'Authorization': `Bearer ${key}` },
-                onload: (res) => {
-                    if (res.status === 200) {
-                        apiKeyStatus.textContent = '✅ API Key OK (利用対象)';
-                        apiKeyStatus.style.color = '#44ff88';
-                    } else {
-                        apiKeyStatus.textContent = '❌ API Key Err';
-                        apiKeyStatus.style.color = '#ff4444';
-                    }
+        /**
+         * APIキー検証関数を生成する共通ファクトリ
+         * @param {HTMLElement} statusEl - 検証結果を表示するステータス要素
+         * @param {Function} buildRequest - key を受け取り GM_xmlhttpRequest の url/headers を返す関数
+         */
+        function makeKeyValidator(statusEl, buildRequest) {
+            return (key) => {
+                if (!key) {
+                    statusEl.textContent = '❌ 未設定';
+                    statusEl.style.color = UI_THEME.err;
                     updateActiveApiSummary();
-                },
-                onerror: () => {
-                    apiKeyStatus.textContent = '❌ API Key Err';
-                    apiKeyStatus.style.color = '#ff4444';
-                    updateActiveApiSummary();
+                    return;
                 }
+                statusEl.textContent = '⏳ テスト中...';
+                statusEl.style.color = UI_THEME.accentDim;
+                const applyResult = (ok) => {
+                    statusEl.textContent = ok ? '✅ API Key OK (利用対象)' : '❌ API Key Err';
+                    statusEl.style.color = ok ? UI_THEME.ok : UI_THEME.err;
+                    updateActiveApiSummary();
+                };
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    ...buildRequest(key),
+                    onload: (res) => applyResult(res.status === 200),
+                    onerror: () => applyResult(false),
+                });
+            };
+        }
+
+        const validateApiKey = makeKeyValidator(document.getElementById('nico-apikey-status'), (key) => ({
+            url: 'https://api.openai.com/v1/models',
+            headers: { 'Authorization': `Bearer ${key}` },
+        }));
+        const validateClaudeKey = makeKeyValidator(document.getElementById('nico-claude-status'), (key) => ({
+            url: 'https://api.anthropic.com/v1/models',
+            headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+        }));
+        const validateGeminiKey = makeKeyValidator(document.getElementById('nico-gemini-status'), (key) => ({
+            url: `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`,
+        }));
+
+        // APIキー入力欄の自動保存＋検証、および使用チェックボックスの保存
+        const API_KEY_BINDINGS = [
+            { inputId: 'nico-openai-key', storageKey: 'NICO_OPENAI_API_KEY', validator: validateApiKey,    enabledId: 'nico-openai-enabled', enabledKey: 'NICO_OPENAI_ENABLED' },
+            { inputId: 'nico-claude-key', storageKey: 'NICO_CLAUDE_API_KEY', validator: validateClaudeKey, enabledId: 'nico-claude-enabled', enabledKey: 'NICO_CLAUDE_ENABLED' },
+            { inputId: 'nico-gemini-key', storageKey: 'NICO_GEMINI_API_KEY', validator: validateGeminiKey, enabledId: 'nico-gemini-enabled', enabledKey: 'NICO_GEMINI_ENABLED' },
+        ];
+        for (const { inputId, storageKey, validator, enabledId, enabledKey } of API_KEY_BINDINGS) {
+            const inputEl = document.getElementById(inputId);
+            inputEl.addEventListener('change', () => {
+                const key = inputEl.value.trim();
+                GM_setValue(storageKey, key);
+                validator(key);
+            });
+            document.getElementById(enabledId).addEventListener('change', (e) => {
+                GM_setValue(enabledKey, e.target.checked);
             });
         }
-
-        apiKeyInput.addEventListener('change', () => {
-            const key = apiKeyInput.value.trim();
-            GM_setValue('NICO_OPENAI_API_KEY', key);
-            validateApiKey(key);
-        });
-
-        // Claude APIキー自動保存と検証
-        const claudeKeyInput = document.getElementById('nico-claude-key');
-        const claudeStatus = document.getElementById('nico-claude-status');
-
-        function validateClaudeKey(key) {
-            if (!key) {
-                claudeStatus.textContent = '❌ 未設定';
-                claudeStatus.style.color = '#ff4444';
-                updateActiveApiSummary();
-                return;
-            }
-            claudeStatus.textContent = '⏳ テスト中...';
-            claudeStatus.style.color = '#aaa';
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: 'https://api.anthropic.com/v1/models',
-                headers: {
-                    'x-api-key': key,
-                    'anthropic-version': '2023-06-01'
-                },
-                onload: (res) => {
-                    if (res.status === 200) {
-                        claudeStatus.textContent = '✅ API Key OK (利用対象)';
-                        claudeStatus.style.color = '#44ff88';
-                    } else {
-                        claudeStatus.textContent = '❌ API Key Err';
-                        claudeStatus.style.color = '#ff4444';
-                    }
-                    updateActiveApiSummary();
-                },
-                onerror: () => {
-                    claudeStatus.textContent = '❌ API Key Err';
-                    claudeStatus.style.color = '#ff4444';
-                    updateActiveApiSummary();
-                }
-            });
-        }
-
-        claudeKeyInput.addEventListener('change', () => {
-            const key = claudeKeyInput.value.trim();
-            GM_setValue('NICO_CLAUDE_API_KEY', key);
-            validateClaudeKey(key);
-        });
-
-        // Gemini APIキー自動保存と検証
-        const geminiKeyInput = document.getElementById('nico-gemini-key');
-        const geminiStatus = document.getElementById('nico-gemini-status');
-
-        function validateGeminiKey(key) {
-            if (!key) {
-                geminiStatus.textContent = '❌ 未設定';
-                geminiStatus.style.color = '#ff4444';
-                updateActiveApiSummary();
-                return;
-            }
-            geminiStatus.textContent = '⏳ テスト中...';
-            geminiStatus.style.color = '#aaa';
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`,
-                onload: (res) => {
-                    if (res.status === 200) {
-                        geminiStatus.textContent = '✅ API Key OK (利用対象)';
-                        geminiStatus.style.color = '#44ff88';
-                    } else {
-                        geminiStatus.textContent = '❌ API Key Err';
-                        geminiStatus.style.color = '#ff4444';
-                    }
-                    updateActiveApiSummary();
-                },
-                onerror: () => {
-                    geminiStatus.textContent = '❌ API Key Err';
-                    geminiStatus.style.color = '#ff4444';
-                    updateActiveApiSummary();
-                }
-            });
-        }
-
-        geminiKeyInput.addEventListener('change', () => {
-            const key = geminiKeyInput.value.trim();
-            GM_setValue('NICO_GEMINI_API_KEY', key);
-            validateGeminiKey(key);
-        });
-
-        // API使用チェックボックスの保存
-        document.getElementById('nico-openai-enabled').addEventListener('change', (e) => {
-            GM_setValue('NICO_OPENAI_ENABLED', e.target.checked);
-        });
-        document.getElementById('nico-claude-enabled').addEventListener('change', (e) => {
-            GM_setValue('NICO_CLAUDE_ENABLED', e.target.checked);
-        });
-        document.getElementById('nico-gemini-enabled').addEventListener('change', (e) => {
-            GM_setValue('NICO_GEMINI_ENABLED', e.target.checked);
-        });
 
         // 保存済みAPIキーの一括検証ヘルパー
         function validateAllApiKeys() {
-            const savedApiKey = GM_getValue('NICO_OPENAI_API_KEY', '');
-            const savedClaudeKey = GM_getValue('NICO_CLAUDE_API_KEY', '');
-            const savedGeminiKey = GM_getValue('NICO_GEMINI_API_KEY', '');
-
-            if (savedApiKey) {
-                validateApiKey(savedApiKey);
-            } else {
-                apiKeyStatus.textContent = '❌ 未設定';
-                apiKeyStatus.style.color = '#ff4444';
+            for (const { storageKey, validator } of API_KEY_BINDINGS) {
+                validator(GM_getValue(storageKey, '').trim());
             }
-
-            if (savedClaudeKey) {
-                validateClaudeKey(savedClaudeKey);
-            } else {
-                claudeStatus.textContent = '❌ 未設定';
-                claudeStatus.style.color = '#ff4444';
-            }
-
-            if (savedGeminiKey) {
-                validateGeminiKey(savedGeminiKey);
-            } else {
-                geminiStatus.textContent = '❌ 未設定';
-                geminiStatus.style.color = '#ff4444';
-            }
-
             updateActiveApiSummary();
         }
 
@@ -1541,6 +1588,10 @@ ${logLines}`;
 
         // 起動時に保存済みのAPIキーを一括自動検証
         validateAllApiKeys();
+
+        // AI利用状況（生成回数・累計コスト）の初期表示
+        updateAiBudgetDisplay();
+        updateCostDisplay();
 
         log('コントロールパネルを表示しました');
     }
