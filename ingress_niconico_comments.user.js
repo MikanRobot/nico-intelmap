@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ニコニコインテルマップ
 // @namespace    https://github.com/MikanRobot/nico-intelmap
-// @version      1.7.0
+// @version      1.8.0
 // @description  Ingress Intel Map上にニコニコ動画風のスクロールコメントを表示する（AIツッコミ機能付き）
 // @updateURL    https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
 // @downloadURL  https://raw.githubusercontent.com/MikanRobot/nico-intelmap/main/ingress_niconico_comments.user.js
@@ -438,10 +438,13 @@
         speechQueue = [];
     }
 
+    let lastUsedApiName = null; // 直近でコメントを生成したAPI名（ステータスバー表示用）
+
     /**
      * 直近で応答したAPIの「▶ 使用中」バッジをUI上に表示する
      */
     function markLastUsedApi(apiName) {
+        lastUsedApiName = apiName;
         const badgeMap = {
             'OpenAI': 'nico-openai-badge',
             'Claude': 'nico-claude-badge',
@@ -451,6 +454,7 @@
             const el = document.getElementById(id);
             if (el) el.style.display = (name === apiName) ? '' : 'none';
         }
+        updateStatusBar();
     }
 
     /**
@@ -607,15 +611,21 @@
     }
 
     /**
-     * パネル上の累計コスト表示（本日／セッション）を最新状態に更新する
+     * 本日のAPI概算コスト（USD）を返す（日付が変わっていれば0）
+     */
+    function getDailyCostUsd() {
+        return GM_getValue('NICO_COST_DATE', '') === getLocalDateKey() ? GM_getValue('NICO_COST_DAILY', 0) : 0;
+    }
+
+    /**
+     * パネル上の累計コスト表示（本日／セッション）とステータスバーを最新状態に更新する
      */
     function updateCostDisplay() {
         const dailyEl = document.getElementById('nico-cost-daily');
         const sessionEl = document.getElementById('nico-cost-session');
-        if (!dailyEl && !sessionEl) return;
-        const daily = GM_getValue('NICO_COST_DATE', '') === getLocalDateKey() ? GM_getValue('NICO_COST_DAILY', 0) : 0;
-        if (dailyEl) dailyEl.textContent = `$${daily.toFixed(5)}`;
+        if (dailyEl) dailyEl.textContent = `$${getDailyCostUsd().toFixed(5)}`;
         if (sessionEl) sessionEl.textContent = `$${sessionCostUsd.toFixed(5)}`;
+        updateStatusBar();
     }
 
     /**
@@ -933,14 +943,85 @@ ${logLines}`;
     }
 
     /**
-     * パネル上のAI生成回数カウンター表示を最新状態に更新する
+     * 現在のAI生成残量に応じた表示色を返す（残量あり=緑／残0=橙／超過=赤）
+     */
+    function aiBudgetColor() {
+        if (autoRefreshCount > maxAutoRefreshes) return UI_THEME.err;
+        if (autoRefreshCount >= maxAutoRefreshes) return UI_THEME.active;
+        return UI_THEME.ok;
+    }
+
+    /**
+     * パネルのAI生成予算表示（カウンター・プログレスバー・延長ボタン）を最新状態に更新する
      */
     function updateAiBudgetDisplay() {
-        const el = document.getElementById('nico-refresh-count');
-        if (!el) return;
-        el.textContent = `${Math.min(autoRefreshCount, maxAutoRefreshes)}/${maxAutoRefreshes}`;
-        el.style.color = autoRefreshCount > maxAutoRefreshes ? UI_THEME.err
-            : (autoRefreshCount >= maxAutoRefreshes ? UI_THEME.active : UI_THEME.ok);
+        const shown = Math.min(autoRefreshCount, maxAutoRefreshes);
+        const color = aiBudgetColor();
+
+        const countEl = document.getElementById('nico-refresh-count');
+        if (countEl) {
+            countEl.textContent = `${shown} / ${maxAutoRefreshes}`;
+            countEl.style.color = color;
+        }
+        const barEl = document.getElementById('nico-budget-bar-fill');
+        if (barEl) {
+            barEl.style.width = `${(shown / maxAutoRefreshes) * 100}%`;
+            barEl.style.background = color;
+        }
+        // 上限到達中は延長ボタンを警告表示（パルス）にして注意を促す
+        const extendBtn = document.getElementById('nico-refresh-extend');
+        if (extendBtn) extendBtn.classList.toggle('nico-btn-warn', autoRefreshCount >= maxAutoRefreshes);
+
+        updateStatusBar();
+        updateStatusDot();
+    }
+
+    /**
+     * ヘッダー下の常時表示ステータスバー（AI残量・本日コスト・直近API）を更新する
+     */
+    function updateStatusBar() {
+        const refreshEl = document.getElementById('nico-status-refresh');
+        if (refreshEl) {
+            refreshEl.textContent = `${Math.min(autoRefreshCount, maxAutoRefreshes)}/${maxAutoRefreshes}`;
+            refreshEl.style.color = aiBudgetColor();
+        }
+        const costEl = document.getElementById('nico-status-cost');
+        if (costEl) costEl.textContent = `$${getDailyCostUsd().toFixed(4)}`;
+        const apiEl = document.getElementById('nico-status-api');
+        if (apiEl) apiEl.textContent = lastUsedApiName || '─';
+    }
+
+    /**
+     * ヘッダーの稼働状態ドットの色・ツールチップを更新する
+     * 🟢稼働中 / 🟠予算切れ / 🔴設定不備
+     */
+    function updateStatusDot() {
+        const dot = document.getElementById('nico-status-dot');
+        if (!dot) return;
+
+        const powerOn = document.getElementById('nico-enabled')?.checked ?? true;
+        const hasUsableApi = ['OPENAI', 'CLAUDE', 'GEMINI'].some(k =>
+            GM_getValue(`NICO_${k}_API_KEY`, '').trim() &&
+            (document.getElementById(`nico-${k.toLowerCase()}-enabled`)?.checked ?? true)
+        );
+
+        let color, title;
+        if (!powerOn) {
+            color = UI_THEME.err;
+            title = '停止中：プラグインが無効です';
+        } else if (!hasUsableApi) {
+            color = UI_THEME.err;
+            title = '停止中：有効なAPIキーが設定されていません（API設定タブ）';
+        } else if (autoRefreshCount > maxAutoRefreshes) {
+            color = UI_THEME.active;
+            title = '停止中：AI生成上限に達しています（「＋延長」で再開できます）';
+        } else {
+            color = UI_THEME.ok;
+            title = '稼働中：ログを監視しAIコメントを生成します';
+        }
+        dot.style.background = color;
+        dot.style.boxShadow = `0 0 6px ${color}`;
+        dot.title = title;
     }
 
     /**
@@ -1231,7 +1312,119 @@ ${logLines}`;
     /**
      * 設定用コントロールパネルを画面右上に構築・表示する
      */
+    /**
+     * コントロールパネル用のスタイルシートを一度だけ<head>に注入する
+     */
+    function injectPanelStyle() {
+        if (document.getElementById('nico-panel-style')) return;
+        const style = document.createElement('style');
+        style.id = 'nico-panel-style';
+        style.textContent = `
+            #niconico-panel {
+                background: ${UI_THEME.bg};
+                border: 1px solid ${UI_THEME.border};
+                border-radius: 6px;
+                box-shadow: 0 0 12px rgba(38,198,218,0.25), inset 0 0 20px rgba(0,0,0,0.4);
+                color: ${UI_THEME.text};
+                font-size: 13px;
+                font-family: sans-serif;
+                cursor: default;
+                user-select: none;
+                accent-color: ${UI_THEME.accent};
+            }
+            #niconico-panel * { box-sizing: border-box; }
+
+            /* ヘッダー */
+            .nico-header {
+                display: flex; align-items: center; gap: 8px;
+                font-weight: bold; letter-spacing: 1px; cursor: move;
+                color: ${UI_THEME.accent}; text-shadow: 0 0 6px rgba(38,198,218,0.5);
+                padding-bottom: 6px; border-bottom: 1px solid ${UI_THEME.border};
+            }
+            .nico-header-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .nico-status-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; background: ${UI_THEME.accentDim}; }
+            .nico-collapse-btn { background: none; border: none; color: ${UI_THEME.accent}; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1; }
+
+            /* ステータスバー（常時表示） */
+            .nico-statusbar { display: flex; align-items: center; gap: 10px; font-size: 10px; color: ${UI_THEME.accentDim}; padding: 5px 2px 3px; cursor: pointer; }
+            .nico-statusbar b { font-weight: bold; color: ${UI_THEME.text}; }
+
+            /* タブ */
+            .nico-tabbar { display: flex; margin: 8px 0 10px; border-bottom: 1px solid ${UI_THEME.border}; }
+            .nico-tab { flex: 1; background: none; border: none; border-bottom: 2px solid transparent; color: ${UI_THEME.accentDim}; padding: 5px 4px; font-size: 12px; cursor: pointer; }
+            .nico-tab.active { color: ${UI_THEME.active}; border-bottom-color: ${UI_THEME.active}; background: rgba(255,178,74,0.12); }
+
+            /* カード / 行 */
+            .nico-card { background: ${UI_THEME.bgSub}; border: 1px solid ${UI_THEME.border}; border-radius: 4px; padding: 8px; margin-bottom: 8px; }
+            .nico-card-title { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: ${UI_THEME.accent}; margin-bottom: 6px; }
+            .nico-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px; }
+            .nico-label { font-size: 12px; color: ${UI_THEME.text}; white-space: nowrap; }
+            .nico-hint { font-size: 10px; color: ${UI_THEME.accentDim}; }
+            .nico-hint b { color: ${UI_THEME.text}; font-weight: bold; }
+            .nico-footer { display: flex; justify-content: flex-end; margin-top: 2px; }
+            .nico-link { color: ${UI_THEME.accent}; font-size: 10px; text-decoration: none; }
+            .nico-link:hover { text-decoration: underline; }
+
+            /* 入力 */
+            .nico-input { background: ${UI_THEME.bgInput}; color: ${UI_THEME.text}; border: 1px solid ${UI_THEME.border}; border-radius: 3px; padding: 4px; }
+            .nico-input:focus { outline: 1px solid ${UI_THEME.accent}; }
+            .nico-num { width: 56px; text-align: center; }
+            .nico-key { width: 100%; }
+
+            /* ボタン */
+            .nico-btn { background: rgba(38,198,218,0.12); border: 1px solid ${UI_THEME.border}; color: ${UI_THEME.accent}; font-size: 10px; padding: 2px 8px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+            .nico-btn:hover { background: rgba(38,198,218,0.25); }
+            .nico-btn-warn { border-color: ${UI_THEME.active}; color: ${UI_THEME.active}; animation: nico-pulse 1.5s infinite; }
+            @keyframes nico-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+            /* トグルスイッチ */
+            .nico-switch { position: relative; display: inline-block; width: 30px; height: 16px; flex: 0 0 auto; }
+            .nico-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+            .nico-slider { position: absolute; inset: 0; background: #2a4a50; border-radius: 8px; transition: 0.15s; cursor: pointer; }
+            .nico-slider::before { content: ''; position: absolute; width: 12px; height: 12px; left: 2px; top: 2px; background: #cfeef0; border-radius: 50%; transition: 0.15s; }
+            .nico-switch input:checked + .nico-slider { background: ${UI_THEME.accent}; }
+            .nico-switch input:checked + .nico-slider::before { transform: translateX(14px); background: #fff; }
+            .nico-switch input:focus-visible + .nico-slider { outline: 1px solid ${UI_THEME.accent}; outline-offset: 1px; }
+
+            /* セグメントコントロール */
+            .nico-segment { display: inline-flex; border: 1px solid ${UI_THEME.border}; border-radius: 3px; overflow: hidden; }
+            .nico-segment label { cursor: pointer; display: inline-flex; }
+            .nico-segment input { position: absolute; opacity: 0; width: 0; height: 0; }
+            .nico-segment span { display: inline-block; font-size: 11px; padding: 3px 12px; color: ${UI_THEME.accentDim}; }
+            .nico-segment label:first-child span { border-right: 1px solid ${UI_THEME.border}; }
+            .nico-segment input:checked + span { color: ${UI_THEME.active}; background: rgba(255,178,74,0.15); font-weight: bold; }
+            .nico-segment input:focus-visible + span { outline: 1px solid ${UI_THEME.accent}; outline-offset: -1px; }
+
+            /* プログレスバー */
+            .nico-bar { height: 6px; background: ${UI_THEME.bgInput}; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+            .nico-bar-fill { height: 100%; width: 0%; background: ${UI_THEME.ok}; border-radius: 3px; transition: width 0.2s, background 0.2s; }
+
+            /* APIカード */
+            .nico-api-card { border: 1px solid ${UI_THEME.border}; border-radius: 4px; padding: 6px; margin-bottom: 8px; }
+            .nico-api-card:last-child { margin-bottom: 0; }
+            .nico-api-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: ${UI_THEME.accentDim}; margin-bottom: 5px; }
+            .nico-api-name { flex: 1; }
+            .nico-api-icon { font-size: 12px; }
+            .nico-api-badge { font-size: 9px; color: ${UI_THEME.active}; background: rgba(255,178,74,0.15); border: 1px solid rgba(255,178,74,0.5); border-radius: 3px; padding: 1px 5px; }
+            .nico-api-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
+            /* APIカードのキー無効化（有効トグルは操作可能なまま、キー欄のみ減光） */
+            .nico-api-card.nico-api-off .nico-api-name,
+            .nico-api-card.nico-api-off .nico-key,
+            .nico-api-card.nico-api-off .nico-api-foot { opacity: 0.4; }
+            .nico-api-card.nico-api-off .nico-key { pointer-events: none; }
+
+            /* 汎用の無効化（減光＋操作不可） */
+            .nico-disabled { opacity: 0.4; pointer-events: none; }
+
+            /* デバッグログ */
+            .nico-log { background: ${UI_THEME.bgInput}; color: ${UI_THEME.text}; font-size: 11px; height: 160px; overflow-y: auto; padding: 4px; border: 1px solid ${UI_THEME.border}; border-radius: 3px; word-break: break-all; }
+        `;
+        document.head.appendChild(style);
+    }
+
     function createControlPanel() {
+        injectPanelStyle();
+
         const panel = document.createElement('div');
         panel.id = 'niconico-panel';
         Object.assign(panel.style, {
@@ -1239,134 +1432,115 @@ ${logLines}`;
             bottom: '30px',
             right: '10px',
             zIndex: '10001',
-            background: UI_THEME.bg,
-            border: `1px solid ${UI_THEME.border}`,
-            borderRadius: '6px',
-            boxShadow: `0 0 12px rgba(38,198,218,0.25), inset 0 0 20px rgba(0,0,0,0.4)`,
             padding: '10px 14px',
-            color: UI_THEME.text,
-            fontSize: '13px',
-            fontFamily: 'sans-serif',
-            cursor: 'default',
-            userSelect: 'none',
-            minWidth: '220px',
+            minWidth: 'auto',
         });
 
-        const savedApiKey = GM_getValue('NICO_OPENAI_API_KEY', '');
+        const speechMode = GM_getValue('NICO_SPEECH_MODE', 'yukkuri');
+
+        // APIカード定義（statusId は互換のためOpenAIのみ旧ID nico-apikey-status を維持）
+        const API_CARDS = [
+            { idx: '①', name: 'OpenAI', enId: 'nico-openai-enabled', enKey: 'NICO_OPENAI_ENABLED', keyId: 'nico-openai-key', keyStore: 'NICO_OPENAI_API_KEY', statusId: 'nico-apikey-status', badgeId: 'nico-openai-badge', ph: 'sk-...',     link: 'https://platform.openai.com/api-keys' },
+            { idx: '②', name: 'Claude', enId: 'nico-claude-enabled', enKey: 'NICO_CLAUDE_ENABLED', keyId: 'nico-claude-key', keyStore: 'NICO_CLAUDE_API_KEY', statusId: 'nico-claude-status', badgeId: 'nico-claude-badge', ph: 'sk-ant-...', link: 'https://console.anthropic.com/settings/keys' },
+            { idx: '③', name: 'Gemini', enId: 'nico-gemini-enabled', enKey: 'NICO_GEMINI_ENABLED', keyId: 'nico-gemini-key', keyStore: 'NICO_GEMINI_API_KEY', statusId: 'nico-gemini-status', badgeId: 'nico-gemini-badge', ph: 'AIza...',   link: 'https://aistudio.google.com/app/apikey' },
+        ];
+
+        const apiCardsHtml = API_CARDS.map(c => {
+            const key = GM_getValue(c.keyStore, '');
+            const enabled = GM_getValue(c.enKey, true);
+            return `
+                <div class="nico-api-card" id="${c.enId}-card">
+                    <div class="nico-api-head">
+                        <label class="nico-switch" title="このAPIを使用する"><input type="checkbox" id="${c.enId}" ${enabled ? 'checked' : ''}><span class="nico-slider"></span></label>
+                        <span class="nico-api-name">${c.idx} ${c.name}</span>
+                        <span id="${c.statusId}" class="nico-api-icon" title="${key ? '未検証' : '未設定'}">${key ? '⏳' : '❌'}</span>
+                        <span id="${c.badgeId}" class="nico-api-badge" style="display:none;">▶ 使用中</span>
+                    </div>
+                    <input type="password" id="${c.keyId}" class="nico-input nico-key" placeholder="${c.ph}" value="${key}">
+                    <div class="nico-api-foot"><a class="nico-link" href="${c.link}" target="_blank">🔑 取得方法</a></div>
+                </div>`;
+        }).join('');
 
         panel.innerHTML = `
-            <div id="nico-drag-handle" style="font-weight:bold;margin-bottom:8px;letter-spacing:1px;border-bottom:1px solid ${UI_THEME.border};padding-bottom:5px;cursor:move;display:flex;align-items:center;justify-content:space-between;color:${UI_THEME.accent};text-shadow:0 0 6px rgba(38,198,218,0.5);" title="ドラッグして移動">
-                <span style="display:flex;align-items:center;gap:8px;">
-                    🎌 ニコニコインテルマップ
-                    <a href="https://github.com/MikanRobot/nico-intelmap" target="_blank" style="font-size:10px;color:${UI_THEME.accent};text-decoration:none;background:rgba(38,198,218,0.12);border:1px solid ${UI_THEME.border};border-radius:4px;padding:1px 6px;white-space:nowrap;">詳細</a>
-                </span>
-                <button id="nico-toggle" style="background:none;border:none;color:${UI_THEME.accent};font-size:16px;cursor:pointer;padding:0 4px;line-height:1;" title="開く">▲</button>
+            <div class="nico-header" id="nico-drag-handle" title="ドラッグで移動 / ダブルクリックで開閉">
+                <span class="nico-status-dot" id="nico-status-dot"></span>
+                <span class="nico-header-title">🎌 ニコニコインテルマップ</span>
+                <label class="nico-switch" id="nico-power-switch" title="プラグインの有効／無効"><input type="checkbox" id="nico-enabled" checked><span class="nico-slider"></span></label>
+                <button class="nico-collapse-btn" id="nico-toggle" title="開く">▲</button>
+            </div>
+
+            <div class="nico-statusbar" id="nico-status-bar" title="クリックでパネルを開く">
+                <span title="AI生成の残り回数">🔄 <b id="nico-status-refresh">0/${MAX_AUTO_REFRESHES}</b></span>
+                <span title="本日のAPI概算コスト">💰 <b id="nico-status-cost">$0.0000</b></span>
+                <span title="直近でコメントを生成したAPI">▶ <b id="nico-status-api">─</b></span>
             </div>
 
             <div id="nico-body" style="display:none;">
-                <!-- タブバー -->
-                <div style="display:flex;margin-bottom:10px;border-bottom:1px solid ${UI_THEME.border};">
-                    <button id="nico-tab-btn-main" style="flex:1;background:rgba(255,178,74,0.12);border:none;border-bottom:2px solid ${UI_THEME.active};color:${UI_THEME.active};padding:5px 4px;font-size:12px;cursor:pointer;">メイン</button>
-                    <button id="nico-tab-btn-api"  style="flex:1;background:none;border:none;border-bottom:2px solid transparent;color:${UI_THEME.accentDim};padding:5px 4px;font-size:12px;cursor:pointer;">API設定</button>
+                <div class="nico-tabbar">
+                    <button class="nico-tab active" id="nico-tab-btn-basic">基本</button>
+                    <button class="nico-tab" id="nico-tab-btn-api">AI / API</button>
+                    <button class="nico-tab" id="nico-tab-btn-log">ログ</button>
                 </div>
 
-                <!-- メインタブ -->
-                <div id="nico-tab-main">
-                    <div style="margin-bottom:8px;">
-                        <label><input type="checkbox" id="nico-enabled" checked> プラグイン有効</label>
-                    </div>
-                    <div style="margin-bottom:12px;display:flex;align-items:center;gap:6px;">
-                        <label style="white-space:nowrap;font-size:12px;">コメント数:</label>
-                        <input type="number" id="nico-comment-count" min="1" max="100" value="${GM_getValue('NICO_COMMENT_COUNT', 7)}" style="width:60px;padding:3px;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;text-align:center;">
-                        <span style="font-size:11px;color:${UI_THEME.accentDim};">個 (1〜100)</span>
-                    </div>
-                    <div style="margin-bottom:8px;padding:6px 8px;background:${UI_THEME.bgSub};border:1px solid ${UI_THEME.border};border-radius:4px;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;">
-                            <span style="font-size:11px;" title="新規ログを伴う自動読み込みの回数。上限に達するとAPI課金防止のためAIコメント生成を停止します">🔄 AI生成回数: <span id="nico-refresh-count" style="font-weight:bold;color:${UI_THEME.ok};">0/${MAX_AUTO_REFRESHES}</span></span>
-                            <button id="nico-refresh-extend" style="background:rgba(38,198,218,0.12);border:1px solid ${UI_THEME.border};color:${UI_THEME.accent};font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;" title="AIコメント生成の上限回数を${MAX_AUTO_REFRESHES}回分追加します（API利用料が発生します）">＋${MAX_AUTO_REFRESHES}回延長</button>
+                <!-- 基本タブ -->
+                <div id="nico-tab-basic">
+                    <div class="nico-card">
+                        <div class="nico-card-title">💬 コメント表示</div>
+                        <div class="nico-row">
+                            <span class="nico-label">1回の生成数</span>
+                            <span><input type="number" id="nico-comment-count" class="nico-input nico-num" min="1" max="100" value="${GM_getValue('NICO_COMMENT_COUNT', 7)}"> <span class="nico-hint">個 (1〜100)</span></span>
                         </div>
-                        <div style="font-size:11px;color:${UI_THEME.accentDim};margin-top:4px;" title="トークン消費量から算出した概算値です。実際の請求額とは異なる場合があります">💰 推定コスト — 本日: <span id="nico-cost-daily" style="color:${UI_THEME.text};">$0.00000</span> / 今回: <span id="nico-cost-session" style="color:${UI_THEME.text};">$0.00000</span></div>
                     </div>
-                    <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid ${UI_THEME.border};">
-                        <label><input type="checkbox" id="nico-speech-enabled" ${GM_getValue('NICO_SPEECH_ENABLED', false) ? 'checked' : ''}> 🔊 音声読み上げ</label>
+                    <div class="nico-card">
+                        <div class="nico-card-title">
+                            <span>🔊 音声読み上げ</span>
+                            <label class="nico-switch" title="音声読み上げの有効／無効"><input type="checkbox" id="nico-speech-enabled" ${GM_getValue('NICO_SPEECH_ENABLED', false) ? 'checked' : ''}><span class="nico-slider"></span></label>
+                        </div>
+                        <div class="nico-row">
+                            <span class="nico-label">読み上げ方式</span>
+                            <span class="nico-segment" id="nico-speech-segment">
+                                <label><input type="radio" name="nico-speech-mode" value="yukkuri" ${speechMode === 'yukkuri' ? 'checked' : ''}><span>ゆっくり</span></label>
+                                <label><input type="radio" name="nico-speech-mode" value="normal" ${speechMode === 'normal' ? 'checked' : ''}><span>普通</span></label>
+                            </span>
+                        </div>
                     </div>
-                    <div style="margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-                        <label style="white-space:nowrap;font-size:12px;">読み上げ方式:</label>
-                        <select id="nico-speech-mode" style="flex:1;padding:3px;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;">
-                            <option value="yukkuri" ${GM_getValue('NICO_SPEECH_MODE', 'yukkuri') === 'yukkuri' ? 'selected' : ''}>ゆっくり</option>
-                            <option value="normal" ${GM_getValue('NICO_SPEECH_MODE', 'yukkuri') === 'normal' ? 'selected' : ''}>普通</option>
-                        </select>
-                    </div>
-                    <div style="margin-bottom:4px;padding-top:8px;border-top:1px solid ${UI_THEME.border};display:flex;align-items:center;justify-content:space-between;">
-                        <label><input type="checkbox" id="nico-debug-enabled"> 🛠️ デバッグ表示</label>
-                        <button id="nico-debug-copy" style="display:none;background:rgba(38,198,218,0.12);border:1px solid ${UI_THEME.border};color:${UI_THEME.accent};font-size:10px;padding:2px 8px;border-radius:3px;cursor:pointer;" title="ログをクリップボードにコピーしてAIに貼り付けてデバッグできます">📋 コピー</button>
-                    </div>
-                    <div id="nico-debug-log" style="display:none;background:${UI_THEME.bgInput};color:${UI_THEME.text};font-size:11px;height:70px;overflow-y:auto;padding:4px;margin-bottom:8px;border:1px solid ${UI_THEME.border};border-radius:3px;word-break:break-all;"></div>
-                    <div style="flex: 1;"></div>
+                    <div class="nico-footer"><a class="nico-link" href="https://github.com/MikanRobot/nico-intelmap" target="_blank">詳細・使い方 ↗</a></div>
                 </div>
 
-                <!-- API設定タブ -->
+                <!-- AI / API タブ -->
                 <div id="nico-tab-api" style="display:none;">
-                    <div style="font-size:10px;color:${UI_THEME.accentDim};margin-bottom:8px;">✅ チェックしたAPIを上から順に使用し、失敗時は次へフォールバックします。</div>
-                    <div style="margin-bottom:10px;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
-                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:${UI_THEME.accentDim};cursor:pointer;">
-                                <input type="checkbox" id="nico-openai-enabled" ${GM_getValue('NICO_OPENAI_ENABLED', true) ? 'checked' : ''}>
-                                <span>① OpenAI API Key</span>
-                            </label>
+                    <div class="nico-card">
+                        <div class="nico-card-title">
+                            <span>🎫 AI生成予算</span>
+                            <button class="nico-btn" id="nico-refresh-extend" title="AIコメント生成の上限を${MAX_AUTO_REFRESHES}回分追加します（API利用料が発生します）">＋${MAX_AUTO_REFRESHES}回延長</button>
                         </div>
-                        <input type="password" id="nico-openai-key" placeholder="sk-..." value="${savedApiKey}" style="width:100%;padding:4px;box-sizing:border-box;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;">
-                        <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
-                            <span style="display:flex;align-items:center;gap:6px;">
-                                <span id="nico-apikey-status" style="font-size:11px;color:${UI_THEME.accentDim};">${savedApiKey ? '⏳ 未検証' : '❌ 未設定'}</span>
-                                <span id="nico-openai-badge" style="display:none;font-size:10px;color:${UI_THEME.active};background:rgba(255,178,74,0.15);border:1px solid rgba(255,178,74,0.5);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
-                            </span>
-                            <a href="https://platform.openai.com/api-keys" target="_blank" style="color:${UI_THEME.accent};font-size:10px;text-decoration:none;">🔑 取得方法</a>
+                        <div class="nico-row">
+                            <span class="nico-label" title="新規ログを伴う自動読み込みの回数。上限に達するとAPI課金防止のためAIコメント生成を停止します">残り生成回数</span>
+                            <span id="nico-refresh-count" style="font-weight:bold;color:${UI_THEME.ok};">0 / ${MAX_AUTO_REFRESHES}</span>
+                        </div>
+                        <div class="nico-bar"><div class="nico-bar-fill" id="nico-budget-bar-fill"></div></div>
+                        <div class="nico-row" style="margin-top:6px;">
+                            <span class="nico-hint" title="トークン消費量から算出した概算値です。実際の請求額とは異なる場合があります">💰 推定コスト</span>
+                            <span class="nico-hint">本日 <b id="nico-cost-daily">$0.00000</b> / 今回 <b id="nico-cost-session">$0.00000</b></span>
                         </div>
                     </div>
-                    <div style="margin-bottom:10px;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
-                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:${UI_THEME.accentDim};cursor:pointer;">
-                                <input type="checkbox" id="nico-claude-enabled" ${GM_getValue('NICO_CLAUDE_ENABLED', true) ? 'checked' : ''}>
-                                <span>② Claude API Key</span>
-                            </label>
-                        </div>
-                        <input type="password" id="nico-claude-key" placeholder="sk-ant-..." value="${GM_getValue('NICO_CLAUDE_API_KEY', '')}" style="width:100%;padding:4px;box-sizing:border-box;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;">
-                        <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
-                            <span style="display:flex;align-items:center;gap:6px;">
-                                <span id="nico-claude-status" style="font-size:11px;color:${UI_THEME.accentDim};">${GM_getValue('NICO_CLAUDE_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
-                                <span id="nico-claude-badge" style="display:none;font-size:10px;color:${UI_THEME.active};background:rgba(255,178,74,0.15);border:1px solid rgba(255,178,74,0.5);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
-                            </span>
-                            <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:${UI_THEME.accent};font-size:10px;text-decoration:none;">🔑 取得方法</a>
-                        </div>
+                    <div class="nico-card">
+                        <div class="nico-card-title"><span>🔑 APIキー</span><span class="nico-hint">上から順に使用・失敗で次へ</span></div>
+                        ${apiCardsHtml}
                     </div>
-                    <div style="margin-bottom:6px;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
-                            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:${UI_THEME.accentDim};cursor:pointer;">
-                                <input type="checkbox" id="nico-gemini-enabled" ${GM_getValue('NICO_GEMINI_ENABLED', true) ? 'checked' : ''}>
-                                <span>③ Gemini API Key</span>
-                            </label>
-                        </div>
-                        <input type="password" id="nico-gemini-key" placeholder="AIza..." value="${GM_getValue('NICO_GEMINI_API_KEY', '')}" style="width:100%;padding:4px;box-sizing:border-box;background:${UI_THEME.bgInput};color:${UI_THEME.text};border:1px solid ${UI_THEME.border};border-radius:3px;">
-                        <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
-                            <span style="display:flex;align-items:center;gap:6px;">
-                                <span id="nico-gemini-status" style="font-size:11px;color:${UI_THEME.accentDim};">${GM_getValue('NICO_GEMINI_API_KEY', '') ? '⏳ 未検証' : '❌ 未設定'}</span>
-                                <span id="nico-gemini-badge" style="display:none;font-size:10px;color:${UI_THEME.active};background:rgba(255,178,74,0.15);border:1px solid rgba(255,178,74,0.5);border-radius:3px;padding:1px 5px;">▶ 使用中</span>
-                            </span>
-                            <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:${UI_THEME.accent};font-size:10px;text-decoration:none;">🔑 取得方法</a>
-                        </div>
-                    </div>
-                    <div id="nico-api-active-summary" style="margin-top:12px;padding:8px;background:${UI_THEME.bgSub};border:1px solid ${UI_THEME.border};border-radius:4px;font-size:11px;line-height:1.4;color:${UI_THEME.text};">
-                        ⏳ 読み込み中...
+                </div>
+
+                <!-- ログタブ -->
+                <div id="nico-tab-log" style="display:none;">
+                    <div class="nico-card">
+                        <div class="nico-card-title"><span>🛠️ デバッグログ</span><button class="nico-btn" id="nico-debug-copy" title="ログをクリップボードにコピーしてAIに貼り付けてデバッグできます">📋 コピー</button></div>
+                        <div class="nico-log" id="nico-debug-log"></div>
                     </div>
                 </div>
             </div>
         `;
 
         document.body.appendChild(panel);
-
-        // チェックボックスのアクセントカラーをIntelテーマのシアンに統一
-        panel.style.accentColor = UI_THEME.accent;
 
         // --- コントロールイベント処理 ---
 
@@ -1396,20 +1570,23 @@ ${logLines}`;
             isDragging = false;
         });
 
-        // パネルタブ切り替えハンドラ
+        // nico-body参照（折りたたみ・電源減光で共用）
+        const nicoBody = document.getElementById('nico-body');
+
+        // パネルタブ切り替えハンドラ（基本 / AI・API / ログ）
         function switchTab(tab) {
-            const isMain = tab === 'main';
-            document.getElementById('nico-tab-main').style.display = isMain ? '' : 'none';
-            document.getElementById('nico-tab-api').style.display = isMain ? 'none' : '';
-            document.getElementById('nico-tab-btn-main').style.borderBottomColor = isMain ? UI_THEME.active : 'transparent';
-            document.getElementById('nico-tab-btn-api').style.borderBottomColor = isMain ? 'transparent' : UI_THEME.active;
-            document.getElementById('nico-tab-btn-main').style.color = isMain ? UI_THEME.active : UI_THEME.accentDim;
-            document.getElementById('nico-tab-btn-api').style.color = isMain ? UI_THEME.accentDim : UI_THEME.active;
-            document.getElementById('nico-tab-btn-main').style.background = isMain ? 'rgba(255,178,74,0.12)' : 'none';
-            document.getElementById('nico-tab-btn-api').style.background = isMain ? 'none' : 'rgba(255,178,74,0.12)';
+            for (const t of ['basic', 'api', 'log']) {
+                document.getElementById(`nico-tab-${t}`).style.display = (t === tab) ? '' : 'none';
+                document.getElementById(`nico-tab-btn-${t}`).classList.toggle('active', t === tab);
+            }
+            if (tab === 'log') {
+                const logBox = document.getElementById('nico-debug-log');
+                if (logBox) logBox.scrollTop = logBox.scrollHeight;
+            }
         }
-        document.getElementById('nico-tab-btn-main').addEventListener('click', () => switchTab('main'));
-        document.getElementById('nico-tab-btn-api').addEventListener('click', () => switchTab('api'));
+        for (const t of ['basic', 'api', 'log']) {
+            document.getElementById(`nico-tab-btn-${t}`).addEventListener('click', () => switchTab(t));
+        }
 
         // コメント数入力同期ハンドラ
         const commentCountInput = document.getElementById('nico-comment-count');
@@ -1419,17 +1596,25 @@ ${logLines}`;
             GM_setValue('NICO_COMMENT_COUNT', val);
         });
 
+        // 音声読み上げの有効／無効に応じて「読み上げ方式」セグメントを減光する
+        function updateSpeechModeState() {
+            const on = document.getElementById('nico-speech-enabled')?.checked;
+            document.getElementById('nico-speech-segment')?.classList.toggle('nico-disabled', !on);
+        }
+
         // 音声合成有効・無効切り替え
         const speechCb = document.getElementById('nico-speech-enabled');
         speechCb.addEventListener('change', () => {
             GM_setValue('NICO_SPEECH_ENABLED', speechCb.checked);
             if (!speechCb.checked) cancelAllSpeech();
+            updateSpeechModeState();
         });
 
-        // 読み上げ方式（ゆっくり／普通）の切り替え
-        const speechModeSelect = document.getElementById('nico-speech-mode');
-        speechModeSelect.addEventListener('change', () => {
-            GM_setValue('NICO_SPEECH_MODE', speechModeSelect.value);
+        // 読み上げ方式（ゆっくり／普通）セグメントの切り替え
+        document.querySelectorAll('input[name="nico-speech-mode"]').forEach((radio) => {
+            radio.addEventListener('change', () => {
+                if (radio.checked) GM_setValue('NICO_SPEECH_MODE', radio.value);
+            });
         });
 
         // AI生成回数の上限延長ボタン
@@ -1440,15 +1625,9 @@ ${logLines}`;
             updateAiBudgetDisplay();
         });
 
-        // システムデバッグログ表示切り替え
-        const debugCb = document.getElementById('nico-debug-enabled');
+        // デバッグログのコピー（ログタブを開いている間だけ表示される）
         const debugLog = document.getElementById('nico-debug-log');
         const debugCopyBtn = document.getElementById('nico-debug-copy');
-        debugCb.addEventListener('change', () => {
-            const show = debugCb.checked;
-            debugLog.style.display = show ? 'block' : 'none';
-            debugCopyBtn.style.display = show ? '' : 'none';
-        });
         debugCopyBtn.addEventListener('click', () => {
             const lines = [...debugLog.children].map(el => el.textContent).join('\n');
             navigator.clipboard.writeText(lines).then(() => {
@@ -1460,7 +1639,7 @@ ${logLines}`;
             });
         });
 
-        // プラグイン有効化切り替え
+        // プラグイン有効化切り替え（ヘッダーの電源トグル）
         const enabledCb = document.getElementById('nico-enabled');
         enabledCb.addEventListener('change', () => {
             const active = enabledCb.checked;
@@ -1471,59 +1650,42 @@ ${logLines}`;
                 eventQueue = [];
                 if (aiTimeout) { clearTimeout(aiTimeout); aiTimeout = null; }
             }
+            nicoBody.style.opacity = active ? '1' : '0.55';
+            updateStatusDot();
         });
+        // 電源トグル操作でパネルドラッグが誤発火しないようにする
+        document.getElementById('nico-power-switch').addEventListener('mousedown', (e) => e.stopPropagation());
 
-        function updateActiveApiSummary() {
-            const summaryEl = document.getElementById('nico-api-active-summary');
-            if (!summaryEl) return;
-
-            const activeApis = [];
-            const openaiKey = GM_getValue('NICO_OPENAI_API_KEY', '').trim();
-            const claudeKey = GM_getValue('NICO_CLAUDE_API_KEY', '').trim();
-            const geminiKey = GM_getValue('NICO_GEMINI_API_KEY', '').trim();
-
-            const openAiOk = document.getElementById('nico-apikey-status')?.textContent.includes('OK');
-            const claudeOk = document.getElementById('nico-claude-status')?.textContent.includes('OK');
-            const geminiOk = document.getElementById('nico-gemini-status')?.textContent.includes('OK');
-
-            if (openaiKey && openAiOk) activeApis.push('OpenAI');
-            if (claudeKey && claudeOk) activeApis.push('Claude');
-            if (geminiKey && geminiOk) activeApis.push('Gemini');
-
-            if (activeApis.length > 0) {
-                summaryEl.innerHTML = `⚙️ <b>読み込み完了</b>:<br>現在 <span style="color:${UI_THEME.ok};font-weight:bold;">${activeApis.join(', ')}</span> のAPIキーを読み込み、利用中です。（チェック済みのAPIを上から順に使用し、エラー時は次のAPIへ自動フォールバックします）`;
-                summaryEl.style.borderColor = UI_THEME.ok;
-            } else {
-                summaryEl.innerHTML = `⚠️ <b>読み込み失敗</b>:<br><span style="color:${UI_THEME.err};">有効なAPIキーが読み込まれていません。いずれかのAPI設定を行ってください。</span>`;
-                summaryEl.style.borderColor = UI_THEME.err;
+        // 各APIカードの有効／無効に応じてキー入力欄を減光する（有効トグル自体は操作可能なまま）
+        function updateApiCardStates() {
+            for (const { enId } of API_CARDS) {
+                const on = document.getElementById(enId)?.checked;
+                document.getElementById(`${enId}-card`)?.classList.toggle('nico-api-off', !on);
             }
         }
 
         /**
          * APIキー検証関数を生成する共通ファクトリ
-         * @param {HTMLElement} statusEl - 検証結果を表示するステータス要素
+         * @param {HTMLElement} statusEl - 検証結果アイコン（✅/❌/⏳）を表示する要素
          * @param {Function} buildRequest - key を受け取り GM_xmlhttpRequest の url/headers を返す関数
          */
         function makeKeyValidator(statusEl, buildRequest) {
+            const setIcon = (icon, title, color) => {
+                statusEl.textContent = icon;
+                statusEl.title = title;
+                statusEl.style.color = color;
+                updateStatusDot();
+            };
             return (key) => {
-                if (!key) {
-                    statusEl.textContent = '❌ 未設定';
-                    statusEl.style.color = UI_THEME.err;
-                    updateActiveApiSummary();
-                    return;
-                }
-                statusEl.textContent = '⏳ テスト中...';
-                statusEl.style.color = UI_THEME.accentDim;
-                const applyResult = (ok) => {
-                    statusEl.textContent = ok ? '✅ API Key OK (利用対象)' : '❌ API Key Err';
-                    statusEl.style.color = ok ? UI_THEME.ok : UI_THEME.err;
-                    updateActiveApiSummary();
-                };
+                if (!key) { setIcon('❌', '未設定', UI_THEME.err); return; }
+                setIcon('⏳', '検証中...', UI_THEME.accentDim);
                 GM_xmlhttpRequest({
                     method: 'GET',
                     ...buildRequest(key),
-                    onload: (res) => applyResult(res.status === 200),
-                    onerror: () => applyResult(false),
+                    onload: (res) => res.status === 200
+                        ? setIcon('✅', 'API Key OK（利用対象）', UI_THEME.ok)
+                        : setIcon('❌', `API Key エラー（HTTP ${res.status}／キーを確認してください）`, UI_THEME.err),
+                    onerror: () => setIcon('❌', 'API Key エラー（通信失敗）', UI_THEME.err),
                 });
             };
         }
@@ -1555,6 +1717,8 @@ ${logLines}`;
             });
             document.getElementById(enabledId).addEventListener('change', (e) => {
                 GM_setValue(enabledKey, e.target.checked);
+                updateApiCardStates();
+                updateStatusDot();
             });
         }
 
@@ -1563,35 +1727,39 @@ ${logLines}`;
             for (const { storageKey, validator } of API_KEY_BINDINGS) {
                 validator(GM_getValue(storageKey, '').trim());
             }
-            updateActiveApiSummary();
+            updateStatusDot();
         }
 
         // 折りたたみトグル制御ハンドラ
-        const nicoBody = document.getElementById('nico-body');
         const toggleBtn = document.getElementById('nico-toggle');
         let panelCollapsed = true;
-        panel.style.minWidth = 'auto';
 
         function togglePanel() {
             panelCollapsed = !panelCollapsed;
             nicoBody.style.display = panelCollapsed ? 'none' : '';
             toggleBtn.textContent = panelCollapsed ? '▲' : '▼';
             toggleBtn.title = panelCollapsed ? '開く' : '折りたたむ';
-            panel.style.minWidth = panelCollapsed ? 'auto' : '220px';
+            panel.style.minWidth = panelCollapsed ? 'auto' : '240px';
         }
 
         toggleBtn.addEventListener('mousedown', (e) => e.stopPropagation());
-        toggleBtn.addEventListener('click', togglePanel);
+        toggleBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePanel(); });
 
         // タイトルバー（ドラッグハンドル）のダブルクリックで開閉
         dragHandle.addEventListener('dblclick', togglePanel);
 
-        // 起動時に保存済みのAPIキーを一括自動検証
-        validateAllApiKeys();
+        // ステータスバーは折りたたみ時のみクリックで展開する
+        document.getElementById('nico-status-bar').addEventListener('click', () => {
+            if (panelCollapsed) togglePanel();
+        });
 
-        // AI利用状況（生成回数・累計コスト）の初期表示
+        // 初期状態の反映（APIキー検証・カード減光・音声セグメント・予算・コスト・ドット）
+        validateAllApiKeys();
+        updateApiCardStates();
+        updateSpeechModeState();
         updateAiBudgetDisplay();
         updateCostDisplay();
+        updateStatusDot();
 
         log('コントロールパネルを表示しました');
     }
